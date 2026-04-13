@@ -1,111 +1,229 @@
-:root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+    --nuba-bg: #0b0f14;
+    --nuba-bg-rgb: 11 15 20;
+    --nuba-surface: #121821;
+    --nuba-surface-rgb: 18 24 33;
+    --nuba-surface-elevated: #1a2330;
+    --nuba-surface-elevated-rgb: 26 35 48;
+    --nuba-text: #e6edf3;
+    --nuba-text-rgb: 230 237 243;
+    --nuba-text-muted: #9fb0c3;
+    --nuba-text-muted-rgb: 159 176 195;
+    --nuba-border: #2a3545;
+    --nuba-border-rgb: 42 53 69;
+    --nuba-brand: #7c9eff;
+    --nuba-brand-rgb: 124 158 255;
+    --nuba-check-in: #5be7a9;
+    --nuba-check-in-rgb: 91 231 169;
+    --nuba-check-out: #ff7a7a;
+    --nuba-check-out-rgb: 255 122 122;
+    --nuba-break: #ffd166;
+    --nuba-break-rgb: 255 209 102;
+    --nuba-overtime: #b388ff;
+    --nuba-overtime-rgb: 179 136 255;
+    --nuba-error: #ff5c8a;
+    --nuba-error-rgb: 255 92 138;
+    --nuba-success: #4ade80;
+    --nuba-success-rgb: 74 222 128;
+    --nuba-shadow: 0 24px 64px -32px rgb(var(--nuba-bg-rgb) / 0.82);
+    --nuba-shadow-elevated: 0 32px 72px -36px rgb(var(--nuba-bg-rgb) / 0.92);
+    --font-sans: 'Avenir Next', 'Manrope', 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', 'SFMono-Regular', monospace;
+    font-family: var(--font-sans);
+    color-scheme: dark;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  * {
+    border-color: var(--nuba-border);
+  }
+
+  html {
+    @apply bg-nuba-bg text-nuba-text;
+  }
+
+  body {
+    @apply m-0 min-h-screen bg-nuba-bg text-base text-nuba-text;
+    background-image:
+      radial-gradient(
+        circle at top,
+        rgb(var(--nuba-brand-rgb) / 0.16),
+        transparent 28%
+      ),
+      radial-gradient(
+        circle at right top,
+        rgb(var(--nuba-overtime-rgb) / 0.1),
+        transparent 24%
+      ),
+      linear-gradient(
+        180deg,
+        rgb(var(--nuba-surface-rgb) / 0.62) 0%,
+        rgb(var(--nuba-bg-rgb) / 0) 32%
+      );
+  }
+
+  #root {
+    min-height: 100svh;
+  }
+
+  ::selection {
+    background: rgb(var(--nuba-brand-rgb) / 0.32);
+    color: var(--nuba-text);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply m-0 text-nuba-text;
+  }
+
+  p {
+    @apply m-0 text-nuba-text-muted;
+  }
+
+  a {
+    @apply text-nuba-text transition-colors duration-200;
+  }
+
+  a:hover {
+    @apply text-nuba-brand;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  html {
+    scrollbar-color: rgb(var(--nuba-brand-rgb) / 0.3) rgb(var(--nuba-bg-rgb) / 1);
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      radial-gradient(circle at 12% 18%, rgb(var(--nuba-brand-rgb) / 0.08), transparent 24%),
+      radial-gradient(circle at 86% 10%, rgb(var(--nuba-overtime-rgb) / 0.08), transparent 22%),
+      linear-gradient(180deg, rgb(var(--nuba-surface-rgb) / 0.08), transparent 30%);
+    z-index: 0;
+  }
+
+  [data-tone='brand'] {
+    --tone-color: var(--nuba-brand);
+    --tone-rgb: var(--nuba-brand-rgb);
+  }
+
+  [data-tone='check-in'] {
+    --tone-color: var(--nuba-check-in);
+    --tone-rgb: var(--nuba-check-in-rgb);
+  }
+
+  [data-tone='check-out'] {
+    --tone-color: var(--nuba-check-out);
+    --tone-rgb: var(--nuba-check-out-rgb);
+  }
+
+  [data-tone='break'] {
+    --tone-color: var(--nuba-break);
+    --tone-rgb: var(--nuba-break-rgb);
+  }
+
+  [data-tone='overtime'] {
+    --tone-color: var(--nuba-overtime);
+    --tone-rgb: var(--nuba-overtime-rgb);
+  }
+
+  [data-tone='error'] {
+    --tone-color: var(--nuba-error);
+    --tone-rgb: var(--nuba-error-rgb);
+  }
+
+  [data-tone='success'] {
+    --tone-color: var(--nuba-success);
+    --tone-rgb: var(--nuba-success-rgb);
   }
 }
 
-body {
-  margin: 0;
-}
-
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-}
-
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
+@layer components {
+  .nuba-panel {
+    @apply rounded-[28px] border border-nuba-border bg-nuba-surface/95;
+    box-shadow: var(--nuba-shadow);
+    backdrop-filter: blur(14px);
   }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
+
+  .nuba-panel-elevated {
+    @apply rounded-[28px] border border-nuba-border bg-nuba-surface-elevated/95;
+    box-shadow: var(--nuba-shadow-elevated);
+    backdrop-filter: blur(18px);
   }
-}
-p {
-  margin: 0;
-}
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
+  .nuba-button-primary,
+  .nuba-button-secondary {
+    @apply inline-flex items-center justify-center gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold transition duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-nuba-brand;
+  }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+  .nuba-button-primary {
+    @apply border-nuba-brand bg-nuba-brand text-nuba-bg hover:brightness-110;
+  }
+
+  .nuba-button-secondary {
+    @apply border-nuba-border bg-nuba-surface-elevated text-nuba-text hover:border-nuba-brand/50 hover:text-nuba-brand;
+  }
+
+  .nuba-badge {
+    @apply inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium tracking-[0.02em];
+    color: var(--tone-color, var(--nuba-text));
+    border-color: rgb(var(--tone-rgb, var(--nuba-border-rgb)) / 0.32);
+    background: rgb(var(--tone-rgb, var(--nuba-surface-elevated-rgb)) / 0.16);
+  }
+
+  .nuba-badge::before {
+    content: '';
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 9999px;
+    background: currentColor;
+    box-shadow: 0 0 0 4px rgb(var(--tone-rgb, var(--nuba-brand-rgb)) / 0.14);
+  }
+
+  .nuba-tone-dot {
+    width: 0.625rem;
+    height: 0.625rem;
+    border-radius: 9999px;
+    background: var(--tone-color, var(--nuba-brand));
+    box-shadow: 0 0 0 6px rgb(var(--tone-rgb, var(--nuba-brand-rgb)) / 0.14);
+  }
+
+  .nuba-input {
+    @apply w-full rounded-2xl border border-nuba-border bg-nuba-bg/80 px-4 py-3 text-sm text-nuba-text transition duration-200 placeholder:text-nuba-text-muted/70 focus:border-nuba-brand focus:outline-none focus:ring-2 focus:ring-nuba-brand/20;
+  }
+
+  .nuba-label {
+    @apply mb-2 block text-sm font-medium text-nuba-text;
+  }
+
+  .nuba-chip {
+    @apply inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-nuba-text transition duration-200 hover:border-nuba-brand/30 hover:bg-nuba-brand/10 hover:text-nuba-brand;
+  }
 }
