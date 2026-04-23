@@ -187,8 +187,35 @@ const toBusinessIso = (date: string, time: string) =>
 const getDayOfWeek = (date: string): DayOfWeek =>
   dayOfWeekByIndex[new Date(`${date}T12:00:00Z`).getUTCDay()] ?? 'MONDAY'
 
+const isWeekday = (dayOfWeek: DayOfWeek) => dayOfWeek !== 'SATURDAY' && dayOfWeek !== 'SUNDAY'
+
+const getUniformWeekdayTargetMinutes = (db: PrototypeDb) => {
+  const weekdayTargets = dayOfWeekByIndex
+    .filter(isWeekday)
+    .map((dayOfWeek) => db.dailyGoals.find((goal) => goal.dayOfWeek === dayOfWeek)?.targetMinutes)
+    .filter((targetMinutes): targetMinutes is number => typeof targetMinutes === 'number')
+
+  return weekdayTargets.find((targetMinutes) => targetMinutes > 0) ?? weekdayTargets[0] ?? 480
+}
+
+const getNormalizedDailyGoals = (db: PrototypeDb) => {
+  if (!db.settings.sameHoursEachDay) {
+    return [...db.dailyGoals]
+  }
+
+  const goalsByDay = new Map(db.dailyGoals.map((goal) => [goal.dayOfWeek, goal.targetMinutes]))
+  const weekdayTargetMinutes = getUniformWeekdayTargetMinutes(db)
+
+  return dayOfWeekByIndex
+    .filter((dayOfWeek): dayOfWeek is DayOfWeek => Boolean(dayOfWeek))
+    .map((dayOfWeek) => ({
+      dayOfWeek,
+      targetMinutes: isWeekday(dayOfWeek) ? weekdayTargetMinutes : goalsByDay.get(dayOfWeek) ?? 0,
+    }))
+}
+
 const getTargetMinutesForDate = (db: PrototypeDb, date: string) =>
-  db.dailyGoals.find((goal) => goal.dayOfWeek === getDayOfWeek(date))?.targetMinutes ?? 0
+  getNormalizedDailyGoals(db).find((goal) => goal.dayOfWeek === getDayOfWeek(date))?.targetMinutes ?? 0
 
 const isWeekendDate = (date: string) => {
   const dayOfWeek = getDayOfWeek(date)
@@ -602,7 +629,7 @@ const createDefaultGoals = (): DailyGoal[] => [
   { dayOfWeek: 'TUESDAY', targetMinutes: 480 },
   { dayOfWeek: 'WEDNESDAY', targetMinutes: 480 },
   { dayOfWeek: 'THURSDAY', targetMinutes: 480 },
-  { dayOfWeek: 'FRIDAY', targetMinutes: 420 },
+  { dayOfWeek: 'FRIDAY', targetMinutes: 480 },
   { dayOfWeek: 'SATURDAY', targetMinutes: 0 },
   { dayOfWeek: 'SUNDAY', targetMinutes: 0 },
 ]
@@ -1083,7 +1110,7 @@ export async function prototypeBackendRequest<TSchema>(
   if (path === '/api/me/daily-goals' && method === 'GET') {
     const db = loadDb()
     const response: DailyGoalsResponse = {
-      goals: db.dailyGoals,
+      goals: getNormalizedDailyGoals(db),
     }
     return response as TSchema
   }

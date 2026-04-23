@@ -86,7 +86,7 @@ export function AppShell() {
       <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-4 pb-24 pt-1.5 sm:px-6 sm:pb-28 sm:pt-2.5 lg:px-8">
         <header
           className={cn(
-            'sticky top-0 z-40',
+            'relative z-40',
             isHomeRoute
               ? 'backdrop-blur-xl mb-2.5 bg-nuba-bg/14 py-0.5 sm:mb-3 sm:py-1'
               : usesCompactHeader
