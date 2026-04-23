@@ -236,10 +236,58 @@ const createDefaultDailyGoals = (): DailyGoal[] => [
   { dayOfWeek: 'TUESDAY', targetMinutes: 480 },
   { dayOfWeek: 'WEDNESDAY', targetMinutes: 480 },
   { dayOfWeek: 'THURSDAY', targetMinutes: 480 },
-  { dayOfWeek: 'FRIDAY', targetMinutes: 420 },
+  { dayOfWeek: 'FRIDAY', targetMinutes: 480 },
   { dayOfWeek: 'SATURDAY', targetMinutes: 0 },
   { dayOfWeek: 'SUNDAY', targetMinutes: 0 },
 ]
+
+const sortDailyGoals = (goals: DailyGoal[]) =>
+  [...goals].sort(
+    (left, right) =>
+      DAY_OF_WEEK_ORDER.indexOf(left.dayOfWeek) - DAY_OF_WEEK_ORDER.indexOf(right.dayOfWeek),
+  )
+
+const isWeekday = (dayOfWeek: DayOfWeek) =>
+  dayOfWeek !== 'SATURDAY' && dayOfWeek !== 'SUNDAY'
+
+const getUniformWeekdayTargetMinutes = (
+  goals: DailyGoal[],
+  workSettings: UserWorkSettingsRow,
+) => {
+  const weekdayTargets = DAY_OF_WEEK_ORDER
+    .filter(isWeekday)
+    .map((dayOfWeek) => goals.find((goal) => goal.dayOfWeek === dayOfWeek)?.targetMinutes)
+    .filter((targetMinutes): targetMinutes is number => typeof targetMinutes === 'number')
+
+  const defaultDailyMinutes =
+    typeof workSettings.default_daily_minutes === 'number' &&
+    Number.isFinite(workSettings.default_daily_minutes)
+      ? Math.max(0, Math.trunc(workSettings.default_daily_minutes))
+      : null
+
+  return defaultDailyMinutes ?? weekdayTargets.find((targetMinutes) => targetMinutes > 0) ?? weekdayTargets[0] ?? 480
+}
+
+const normalizeGoalsForWorkSettings = (
+  goals: DailyGoal[],
+  workSettings: UserWorkSettingsRow,
+) => {
+  const sortedGoals = sortDailyGoals(goals)
+
+  if (!workSettings.same_hours_every_day) {
+    return sortedGoals
+  }
+
+  const goalsByDay = new Map(sortedGoals.map((goal) => [goal.dayOfWeek, goal.targetMinutes]))
+  const weekdayTargetMinutes = getUniformWeekdayTargetMinutes(sortedGoals, workSettings)
+
+  return DAY_OF_WEEK_ORDER.map((dayOfWeek) => ({
+    dayOfWeek,
+    targetMinutes: isWeekday(dayOfWeek)
+      ? weekdayTargetMinutes
+      : goalsByDay.get(dayOfWeek) ?? 0,
+  }))
+}
 
 const getTargetMinutesForDate = (goals: DailyGoal[], date: string) =>
   goals.find((goal) => goal.dayOfWeek === getDayOfWeek(date))?.targetMinutes ?? 0
@@ -299,12 +347,14 @@ const toWorkSession = (
   const sortedBreaks = [...breaks].sort(
     (left, right) => new Date(left.start_time).getTime() - new Date(right.start_time).getTime(),
   )
+  const isClosedSession = Boolean(session.end_time)
   const endTime = session.end_time ?? nowIso
-  const breakMinutes = sortedBreaks.reduce(
-    (total, workBreak) => total + getBreakMinutes(workBreak, nowIso),
-    0,
-  )
-  const workedMinutes = Math.max(0, minutesBetween(session.start_time, endTime) - breakMinutes)
+  const breakMinutes = isClosedSession
+    ? Math.max(0, Math.trunc(session.break_minutes ?? 0))
+    : sortedBreaks.reduce((total, workBreak) => total + getBreakMinutes(workBreak, nowIso), 0)
+  const workedMinutes = isClosedSession
+    ? Math.max(0, Math.trunc(session.worked_minutes ?? 0))
+    : Math.max(0, minutesBetween(session.start_time, endTime) - breakMinutes)
 
   return {
     id: session.id,
@@ -786,6 +836,7 @@ const toDailyGoal = (row: UserDailyGoalRow): DailyGoal => ({
 })
 
 const ensureDailyGoals = async (userId: string, path: string) => {
+  const workSettings = await ensureWorkSettingsRow(userId, path)
   const current = await supabase
     .from('user_daily_goals')
     .select('*')
@@ -799,12 +850,7 @@ const ensureDailyGoals = async (userId: string, path: string) => {
   const rows = asRows<UserDailyGoalRow>(current.data)
 
   if (rows.length >= 7) {
-    return [...rows]
-      .map(toDailyGoal)
-      .sort(
-        (left, right) =>
-          DAY_OF_WEEK_ORDER.indexOf(left.dayOfWeek) - DAY_OF_WEEK_ORDER.indexOf(right.dayOfWeek),
-      )
+    return normalizeGoalsForWorkSettings(rows.map(toDailyGoal), workSettings)
   }
 
   const existingByDay = new Map(rows.map((row) => [DB_TO_DAY_OF_WEEK[row.day_of_week] ?? 'MONDAY', row]))
@@ -839,7 +885,7 @@ const ensureDailyGoals = async (userId: string, path: string) => {
     throw toSupabaseApiError(path, refreshed.error, 'No pudimos refrescar los objetivos diarios.')
   }
 
-  return asRows<UserDailyGoalRow>(refreshed.data).map(toDailyGoal)
+  return normalizeGoalsForWorkSettings(asRows<UserDailyGoalRow>(refreshed.data).map(toDailyGoal), workSettings)
 }
 
 const fetchSessionsForDate = async (userId: string, date: string, signal?: AbortSignal) => {

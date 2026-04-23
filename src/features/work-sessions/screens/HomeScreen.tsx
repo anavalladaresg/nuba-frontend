@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ArrowUpRight,
   Coffee,
@@ -6,9 +6,10 @@ import {
   Pause,
   Play,
   Square,
+  X,
   type LucideIcon,
 } from 'lucide-react'
-import { motion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import { useOutletContext } from 'react-router-dom'
 import { useTodayWorkSessionQuery } from '../hooks/useTodayWorkSessionQuery'
 import { useLiveTodayMetrics } from '../hooks/useLiveTodayMetrics'
@@ -111,6 +112,7 @@ export function HomeScreen() {
   const { setHomeSummaryMeta } = useOutletContext<AppShellOutletContext>()
   const todayQuery = useTodayWorkSessionQuery()
   const actions = useSessionActions()
+  const [isStopConfirmOpen, setIsStopConfirmOpen] = useState(false)
 
   const liveMetrics = useLiveTodayMetrics(
     todayQuery.data,
@@ -141,6 +143,30 @@ export function HomeScreen() {
     },
     [setHomeSummaryMeta],
   )
+
+  useEffect(() => {
+    if (!todayQuery.data?.summary.hasOpenSession) {
+      setIsStopConfirmOpen(false)
+    }
+  }, [todayQuery.data?.summary.hasOpenSession])
+
+  useEffect(() => {
+    if (!isStopConfirmOpen) {
+      return
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsStopConfirmOpen(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isStopConfirmOpen])
 
   if (todayQuery.isLoading && !today) {
     return (
@@ -323,7 +349,7 @@ export function HomeScreen() {
         icon: Square,
         label: 'Finalizar',
         loading: actions.stopMutation.isPending,
-        onClick: () => actions.stopMutation.mutate(),
+        onClick: () => setIsStopConfirmOpen(true),
         tone: 'danger',
       },
     )
@@ -334,7 +360,7 @@ export function HomeScreen() {
       icon: Square,
       label: 'Finalizar jornada',
       loading: actions.stopMutation.isPending,
-      onClick: () => actions.stopMutation.mutate(),
+      onClick: () => setIsStopConfirmOpen(true),
       tone: 'danger',
     })
   }
@@ -404,6 +430,10 @@ export function HomeScreen() {
     <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
   )
   const timerCaption = hasPausedSession ? 'Tiempo pausado' : 'Hoy trabajado'
+  const stopConfirmBadgeLabel = hasPausedSession ? 'En pausa' : 'Activa'
+  const stopConfirmDescription = hasPausedSession
+    ? 'Se guardará la salida con el estado actual.'
+    : 'Se guardará la hora actual como salida.'
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto overscroll-contain">
@@ -729,6 +759,106 @@ export function HomeScreen() {
             : 'Revisa el estado actual de la sesión y vuelve a intentarlo.'}
         </InlineAlert>
       ) : null}
+
+      <AnimatePresence>
+        {isStopConfirmOpen ? (
+          <>
+            <motion.button
+              type="button"
+              aria-label="Cerrar confirmación de fin de jornada"
+              onClick={() => setIsStopConfirmOpen(false)}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="fixed inset-0 z-[60] bg-[rgb(8_11_16_/_0.52)] backdrop-blur-[6px]"
+            />
+
+            <motion.section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="stop-confirm-title"
+              aria-describedby="stop-confirm-description"
+              initial={{ y: '100%', opacity: 0.96 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: '100%', opacity: 0.96 }}
+              transition={{ type: 'spring', stiffness: 280, damping: 30 }}
+              className="fixed inset-x-0 bottom-0 z-[70] mx-auto w-full max-w-3xl rounded-t-[32px] border border-white/[0.08] bg-[linear-gradient(180deg,_rgb(26_35_48_/_0.98),_rgb(18_24_33_/_0.98))] shadow-[0_-30px_78px_-36px_rgba(0,0,0,0.92)] backdrop-blur-[20px] lg:bottom-4 lg:left-1/2 lg:w-[min(28rem,calc(100vw-2rem))] lg:-translate-x-1/2 lg:rounded-[32px]"
+              style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 0.75rem)' }}
+            >
+              <div className="flex justify-center px-4 pt-2.5">
+                <span className="h-1.5 w-12 rounded-full bg-white/10" aria-hidden="true" />
+              </div>
+
+              <div className="px-4 pb-4 pt-2 sm:px-5 sm:pb-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-2.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="rounded-full border border-nuba-check-out/22 bg-nuba-check-out/[0.08] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-nuba-check-out">
+                        Confirmación
+                      </span>
+                      <span className="rounded-full border border-white/8 bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-nuba-text-muted/78">
+                        {stopConfirmBadgeLabel}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1">
+                      <h3
+                        id="stop-confirm-title"
+                        className="text-[1.02rem] font-semibold tracking-[-0.04em] text-nuba-text sm:text-[1.12rem]"
+                      >
+                        ¿Terminar jornada?
+                      </h3>
+                      <p
+                        id="stop-confirm-description"
+                        className="max-w-sm text-sm leading-5 text-nuba-text-muted/74"
+                      >
+                        {stopConfirmDescription}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsStopConfirmOpen(false)}
+                    aria-label="Cerrar confirmación"
+                    className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/8 bg-white/[0.04] text-nuba-text-muted/78 transition hover:border-white/12 hover:bg-white/[0.06] hover:text-nuba-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-nuba-brand"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsStopConfirmOpen(false)}
+                    disabled={actions.stopMutation.isPending}
+                    className="inline-flex min-h-[2.9rem] items-center justify-center rounded-[18px] border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-sm font-semibold text-nuba-text-muted/88 transition duration-200 hover:border-white/14 hover:bg-white/[0.06] hover:text-nuba-text disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Seguir fichando
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      actions.stopMutation.mutate()
+                    }}
+                    disabled={actions.stopMutation.isPending}
+                    className="inline-flex min-h-[2.9rem] items-center justify-center gap-2 rounded-[18px] border border-nuba-check-out/34 bg-[linear-gradient(135deg,_rgb(255_122_122_/_0.2),_rgb(157_52_80_/_0.22))] px-4 py-3 text-sm font-semibold text-nuba-text shadow-[inset_0_1px_0_rgb(255_255_255_/_0.08),0_18px_32px_-24px_rgb(255_122_122_/_0.5)] transition duration-200 hover:border-nuba-check-out/50 hover:bg-[linear-gradient(135deg,_rgb(255_122_122_/_0.26),_rgb(157_52_80_/_0.3))] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {actions.stopMutation.isPending ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Square className="h-4 w-4" />
+                    )}
+                    Terminar jornada
+                  </button>
+                </div>
+              </div>
+            </motion.section>
+          </>
+        ) : null}
+      </AnimatePresence>
     </div>
   )
 }

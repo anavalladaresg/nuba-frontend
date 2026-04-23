@@ -46,6 +46,8 @@ const PAGE_WIDTH = 595
 const PAGE_HEIGHT = 842
 const PAGE_MARGIN = 38
 const TABLE_WIDTH = PAGE_WIDTH - PAGE_MARGIN * 2
+const TABLE_ROW_INSET = 0.9
+const TABLE_ROW_VERTICAL_INSET = 0.5
 const ROW_HEIGHT = 37
 const FIRST_PAGE_TABLE_TOP = 286
 const NEXT_PAGE_TABLE_TOP = 120
@@ -737,19 +739,28 @@ const drawEmptyRecords = (top: number) =>
     }),
   ].join('\n')
 
-const drawSessionRow = (session: WorkSession, index: number, top: number) => {
+const drawSessionRow = (
+  session: WorkSession,
+  index: number,
+  top: number,
+  isLastRow: boolean,
+) => {
   const rowTop = top + index * ROW_HEIGHT
-  const fill = index % 2 === 0 ? '#FFFFFF' : '#FAFCFF'
+  const fill = index % 2 === 0 ? null : '#FAFCFF'
+  const rowFillTop = rowTop + TABLE_ROW_VERTICAL_INSET
+  const rowFillHeight = ROW_HEIGHT - TABLE_ROW_VERTICAL_INSET * 2
 
   return [
-    rect({
-      x: PAGE_MARGIN,
-      top: rowTop,
-      width: TABLE_WIDTH,
-      height: ROW_HEIGHT,
-      fill,
-    }),
-    hairline(PAGE_MARGIN + 14, rowTop + ROW_HEIGHT, TABLE_WIDTH - 28, PDF_COLORS.hairline),
+    fill
+      ? rect({
+          x: PAGE_MARGIN + TABLE_ROW_INSET,
+          top: rowFillTop,
+          width: TABLE_WIDTH - TABLE_ROW_INSET * 2,
+          height: rowFillHeight,
+          fill,
+        })
+      : '',
+    isLastRow ? '' : hairline(PAGE_MARGIN + 14, rowTop + ROW_HEIGHT, TABLE_WIDTH - 28, PDF_COLORS.hairline),
     text({
       x: TABLE_COLUMNS.date,
       top: rowTop + 14,
@@ -808,7 +819,11 @@ const drawTable = (sessions: WorkSession[], top: number) => {
   if (!sessions.length) {
     table.push(drawEmptyRecords(top))
   } else {
-    table.push(...sessions.map((session, index) => drawSessionRow(session, index, rowsTop)))
+    table.push(
+      ...sessions.map((session, index) =>
+        drawSessionRow(session, index, rowsTop, index === sessions.length - 1),
+      ),
+    )
   }
 
   return table.join('\n')
