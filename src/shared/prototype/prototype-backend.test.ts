@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MeSettings, NotificationsSettings, CurrentUser, DailyGoal } from '../types/settings'
-import type { WorkSessionStartResponse, WorkSessionUpdatePayload } from '../types/work-session'
+import type {
+  TodayWorkSessionsResponse,
+  WorkSessionStartResponse,
+  WorkSessionUpdatePayload,
+} from '../types/work-session'
 import {
   getPrototypeDbSnapshotForTests,
   prototypeBackendRequest,
@@ -168,5 +172,43 @@ describe('prototype backend work sessions', () => {
     expect(previousSession?.endTime).toBe('2026-05-14T14:30:00.000Z')
     expect(previousSession?.manualEdits.at(-1)?.fieldChanged).toBe('AUTO_COMPLETE')
     expect(newSession?.endTime).toBeNull()
+  })
+
+  it('auto-completes an open session from the same day once target plus grace has passed', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-15T14:00:00.000Z'))
+
+    seedDb(
+      [
+        {
+          id: 'session-today',
+          status: 'ACTIVE',
+          startTime: '2026-05-15T05:00:00.000Z',
+          endTime: null,
+          notes: null,
+          reason: null,
+          breaks: [],
+          timeline: [],
+          manualEdits: [],
+        },
+      ],
+      {
+        autoCompleteForgottenCheckout: true,
+        autoCompleteGraceMinutes: 35,
+      },
+    )
+
+    const response = await runPrototypeRequest<TodayWorkSessionsResponse>('/api/work-sessions/today')
+
+    expect(response.summary.hasOpenSession).toBe(false)
+    expect(response.sessions[0]?.id).toBe('session-today')
+    expect(response.sessions[0]?.endTime).toBe('2026-05-15T13:35:00.000Z')
+    expect(response.sessions[0]?.autoCloseNotice?.endTime).toBe('2026-05-15T13:35:00.000Z')
+
+    const persisted = getPrototypeDbSnapshotForTests()
+    const closedSession = persisted.sessions.find((session) => session.id === 'session-today')
+
+    expect(closedSession?.endTime).toBe('2026-05-15T13:35:00.000Z')
+    expect(closedSession?.manualEdits.at(-1)?.fieldChanged).toBe('AUTO_COMPLETE')
   })
 })

@@ -1227,7 +1227,7 @@ const resolveAutoCompleteTargetMinutes = (db: PrototypeDb, session: StoredSessio
   return getUniformWeekdayTargetMinutes(db) || FALLBACK_AUTO_COMPLETE_TARGET_MINUTES
 }
 
-const maybeAutoCompleteCarryOverSession = (
+const maybeAutoCompleteOpenSession = (
   db: PrototypeDb,
   nowIso: string,
 ): WorkSessionAutoCloseNotice | null => {
@@ -1244,7 +1244,7 @@ const maybeAutoCompleteCarryOverSession = (
   const workDate = getBusinessDateFromInstant(session.startTime)
   const today = getBusinessDateFromInstant(nowIso)
 
-  if (workDate >= today || hasOpenBreak(session)) {
+  if (workDate > today || hasOpenBreak(session)) {
     return null
   }
 
@@ -1325,7 +1325,7 @@ export async function prototypeBackendRequest<TSchema>(
 
   if (path === '/api/work-sessions/today' && method === 'GET') {
     return updateDb((db) => {
-      maybeAutoCompleteCarryOverSession(db, nowIso)
+      maybeAutoCompleteOpenSession(db, nowIso)
 
       const response = buildTodayResponse(db, nowIso)
       const openSession = getOpenSession(db)
@@ -1343,7 +1343,7 @@ export async function prototypeBackendRequest<TSchema>(
 
   if (path === '/api/work-sessions/start' && method === 'POST') {
     return updateDb((db) => {
-      const autoClosedPreviousSession = maybeAutoCompleteCarryOverSession(db, nowIso)
+      const autoClosedPreviousSession = maybeAutoCompleteOpenSession(db, nowIso)
       const openSession = getOpenSession(db)
 
       if (openSession) {

@@ -833,8 +833,8 @@ export function SettingsScreen() {
                     Cierre automático de olvidos
                   </p>
                   <p className="text-xs leading-5 text-nuba-text-muted/72">
-                    Si una jornada de un día anterior sigue abierta y ya ha superado su objetivo
-                    más un margen, Nuba la cerrará sola para no bloquear el siguiente fichaje.
+                    Si una jornada sigue abierta y ya ha superado su objetivo más un margen,
+                    Nuba la cerrará sola para no dejarla colgada por olvido.
                   </p>
                 </div>
                 <SettingsToggle
@@ -864,7 +864,7 @@ export function SettingsScreen() {
               {autoCompleteForgottenCheckout ? (
                 <div className="mt-4 rounded-2xl border border-nuba-break/18 bg-[linear-gradient(180deg,_rgb(255_209_102_/_0.12),_rgb(255_209_102_/_0.06))] px-3 py-2.5 text-sm text-nuba-text">
                   Si olvidas desfichar, verás un mensaje indicando que se completó
-                  automáticamente tras {formatGoalMinutes(autoCompleteGraceMinutes)} de margen.
+                  automáticamente al pasar {formatGoalMinutes(autoCompleteGraceMinutes)} de margen.
                 </div>
               ) : null}
             </div>
