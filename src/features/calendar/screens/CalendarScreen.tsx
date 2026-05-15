@@ -1,9 +1,9 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { eachDayOfInterval, endOfMonth, format, getDate, getISODay, startOfMonth } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { useQuery } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'motion/react'
-import { ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, PencilLine, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { calendarApi } from '../api/calendar.api'
 import { calendarKeys } from '../api/calendar.keys'
@@ -11,11 +11,20 @@ import {
   getCalendarDayTone,
   getCalendarDayToneLabel,
 } from '../lib/calendarDayAppearance'
+import { WorkSessionEditorPanel } from '../components/WorkSessionEditorPanel'
 import { useAuthSession } from '../../auth/AuthSessionProvider'
+import { workSessionsApi } from '../../work-sessions/api/workSessions.api'
+import { workSessionKeys } from '../../work-sessions/api/workSessions.keys'
 import { CalendarDayCell } from '../../../shared/ui/cards/CalendarDayCell'
+import { InlineAlert } from '../../../shared/ui/feedback/InlineAlert'
 import { ErrorState, LoadingState } from '../../../shared/ui/states/StateViews'
 import { isApiError } from '../../../shared/api/api-error'
 import { cn } from '../../../shared/utils/cn'
+import {
+  formatMinutesCompact,
+  formatTime,
+  getStatusLabel,
+} from '../../../shared/utils/format'
 
 const weekdayLabels = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
 
@@ -65,13 +74,15 @@ const formatMetricMinutes = (minutes: number) => {
 export function CalendarScreen() {
   const auth = useAuthSession()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [calendarNowMs, setCalendarNowMs] = useState(() => Date.now())
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [saveFeedback, setSaveFeedback] = useState<string | null>(null)
   const sheetTouchStartY = useRef<number | null>(null)
   const now = new Date()
   const todayIso = format(now, 'yyyy-MM-dd')
   const year = Number(searchParams.get('year') ?? now.getFullYear())
   const month = Number(searchParams.get('month') ?? now.getMonth() + 1)
+  const selectedDate = searchParams.get('date')
   const currentMonthDate = new Date(year, month - 1, 1)
 
   const calendarQuery = useQuery({
@@ -83,7 +94,8 @@ export function CalendarScreen() {
   const changeMonth = (offset: number) => {
     const nextDate = new Date(year, month - 1 + offset, 1)
 
-    setSelectedDate(null)
+    setSelectedSessionId(null)
+    setSaveFeedback(null)
     startTransition(() => {
       setSearchParams({
         year: String(nextDate.getFullYear()),
@@ -91,6 +103,22 @@ export function CalendarScreen() {
       })
     })
   }
+
+  const setSelectedDate = useCallback((nextDate: string | null) => {
+    const nextSearchParams = new URLSearchParams(searchParams)
+
+    if (nextDate) {
+      nextSearchParams.set('date', nextDate)
+    } else {
+      nextSearchParams.delete('date')
+    }
+
+    setSelectedSessionId(null)
+    setSaveFeedback(null)
+    startTransition(() => {
+      setSearchParams(nextSearchParams)
+    })
+  }, [searchParams, setSearchParams])
 
   const firstDay = startOfMonth(currentMonthDate)
   const lastDay = endOfMonth(currentMonthDate)
@@ -142,12 +170,29 @@ export function CalendarScreen() {
       ? 'Hoy'
       : null
 
+  const daySessionsQuery = useQuery({
+    queryKey: workSessionKeys.history({
+      from: selectedDate ?? '',
+      to: selectedDate ?? '',
+      page: 0,
+      size: 24,
+    }),
+    queryFn: () =>
+      workSessionsApi.getHistory({
+        from: selectedDate ?? undefined,
+        to: selectedDate ?? undefined,
+        page: 0,
+        size: 24,
+      }),
+    enabled: auth.isAuthenticated && Boolean(selectedDate),
+  })
+  const daySessions = daySessionsQuery.data?.items ?? []
+
   useEffect(() => {
     if (!hasRunningCalendarDay) {
       return undefined
     }
 
-    setCalendarNowMs(Date.now())
     const intervalId = window.setInterval(() => {
       setCalendarNowMs(Date.now())
     }, 1000)
@@ -177,7 +222,7 @@ export function CalendarScreen() {
       document.body.style.overflow = previousOverflow
       window.removeEventListener('keydown', handleEscape)
     }
-  }, [selectedDate])
+  }, [selectedDate, setSelectedDate])
 
   return (
     <div className="relative flex flex-col gap-8 pb-28 after:pointer-events-none after:absolute after:inset-x-[9%] after:bottom-16 after:h-24 after:bg-[radial-gradient(ellipse_at_center,_rgb(255_255_255_/_0.045),_transparent_72%)] after:blur-3xl lg:pb-12 lg:after:bottom-4">
@@ -261,11 +306,7 @@ export function CalendarScreen() {
                     summary={summaryByDate.get(isoDate)}
                     isToday={isoDate === todayIso}
                     isSelected={selectedDate === isoDate}
-                    onSelect={() =>
-                      setSelectedDate((currentValue) =>
-                        currentValue === isoDate ? null : isoDate,
-                      )
-                    }
+                    onSelect={() => setSelectedDate(selectedDate === isoDate ? null : isoDate)}
                   />
                 )
               })}
@@ -412,6 +453,137 @@ export function CalendarScreen() {
                       {selectedSummary?.outingsCount ?? 0}
                     </p>
                   </div>
+                </div>
+
+                <div className="mt-5 space-y-3">
+                  {saveFeedback ? (
+                    <InlineAlert tone="success" title="Jornada actualizada">
+                      {saveFeedback}
+                    </InlineAlert>
+                  ) : null}
+
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-nuba-text">Sesiones del día</p>
+                      <p className="text-xs text-nuba-text-muted/70">
+                        Revisa cada bloque y ajusta entrada, descanso o salida si hace falta.
+                      </p>
+                    </div>
+                    {daySessionsQuery.isFetching && !daySessionsQuery.isLoading ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-white/[0.07] bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium text-nuba-text-muted/82">
+                        Sincronizando
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {daySessionsQuery.isLoading ? (
+                    <div className="rounded-[24px] border border-white/[0.06] bg-white/[0.03] px-4 py-5 text-sm text-nuba-text-muted/78">
+                      Cargando las sesiones de esta fecha.
+                    </div>
+                  ) : null}
+
+                  {daySessionsQuery.isError ? (
+                    <InlineAlert tone="error" title="No pudimos cargar las sesiones">
+                      {isApiError(daySessionsQuery.error)
+                        ? daySessionsQuery.error.message
+                        : 'Inténtalo de nuevo en unos segundos.'}
+                    </InlineAlert>
+                  ) : null}
+
+                  {!daySessionsQuery.isLoading &&
+                  !daySessionsQuery.isError &&
+                  daySessions.length === 0 ? (
+                    <InlineAlert tone="info" title="Sin fichajes ese día">
+                      No hay sesiones registradas en esta fecha todavía.
+                    </InlineAlert>
+                  ) : null}
+
+                  {daySessions.length ? (
+                    <div className="space-y-3">
+                      {daySessions.map((session) => {
+                        const isActiveSession = selectedSessionId === session.id
+
+                        return (
+                          <button
+                            key={session.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedSessionId(session.id)
+                              setSaveFeedback(null)
+                            }}
+                            className={cn(
+                              'w-full rounded-[24px] border px-4 py-3 text-left transition duration-200',
+                              isActiveSession
+                                ? 'border-nuba-brand/28 bg-nuba-brand/[0.08] shadow-[0_18px_46px_-34px_rgb(124_158_255_/_0.85)]'
+                                : 'border-white/[0.06] bg-[linear-gradient(180deg,_rgb(26_35_48_/_0.22),_rgb(18_24_33_/_0.42))] hover:border-white/12 hover:bg-white/[0.04]',
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-nuba-text-muted/82">
+                                    {getStatusLabel(session.status)}
+                                  </span>
+                                  {session.autoCloseNotice ? (
+                                    <span className="rounded-full border border-nuba-break/24 bg-nuba-break/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-nuba-break">
+                                      Autocompletada
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <p className="mt-2 text-[1rem] font-semibold tracking-[-0.03em] text-nuba-text">
+                                  {formatTime(session.startTime)} {session.endTime ? `- ${formatTime(session.endTime)}` : '- abierta'}
+                                </p>
+                                <p className="mt-1 text-xs leading-5 text-nuba-text-muted/72">
+                                  {session.reason
+                                    ? session.reason
+                                    : session.endTime
+                                      ? 'Sin incidencias registradas.'
+                                      : 'Esta jornada sigue abierta y puede corregirse desde aquí.'}
+                                </p>
+                              </div>
+
+                              <div className="shrink-0 text-right">
+                                <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-nuba-text-muted/50">
+                                  Neto
+                                </p>
+                                <p className="mt-1 text-sm font-semibold text-nuba-text">
+                                  {formatMinutesCompact(session.workedMinutes ?? 0)}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-nuba-brand">
+                              <PencilLine className="h-3.5 w-3.5" />
+                              Ajustar tiempos
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  ) : null}
+
+                  {selectedSessionId ? (
+                    <div className="rounded-[28px] border border-white/[0.06] bg-[linear-gradient(180deg,_rgb(20_27_37_/_0.94),_rgb(15_20_28_/_0.98))] p-4 shadow-[0_24px_56px_-42px_rgb(0_0_0_/_0.92)]">
+                      <div className="mb-4">
+                        <p className="text-sm font-semibold text-nuba-text">Editor de jornada</p>
+                        <p className="text-xs text-nuba-text-muted/70">
+                          Todo lo que cambies se recalculará en Home, calendario e insights.
+                        </p>
+                      </div>
+
+                      <WorkSessionEditorPanel
+                        date={selectedDate}
+                        sessionId={selectedSessionId}
+                        onCancel={() => setSelectedSessionId(null)}
+                        onSaved={() => {
+                          setSaveFeedback(
+                            'Los tiempos ya están corregidos y el resumen del día se ha recalculado.',
+                          )
+                          setSelectedSessionId(null)
+                        }}
+                      />
+                    </div>
+                  ) : null}
                 </div>
 
               </div>

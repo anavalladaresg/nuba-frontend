@@ -43,6 +43,9 @@ const baseDashboardData: DashboardStatisticsResponse = {
     endTime: null,
     notes: null,
     reason: null,
+    editType: null,
+    editedAt: null,
+    autoCloseNotice: null,
     workedMinutes: 330,
     breakMinutes: 32,
   },
@@ -381,7 +384,7 @@ describe('buildDashboardCopilotModel', () => {
     const model = buildDashboardCopilotModel({ dashboard: emptyDashboard })
 
     expect(model.isEmpty).toBe(true)
-    expect(model.hero.title).toContain('aún estamos observando')
+    expect(model.hero.title).toContain('Bienvenido a Insights')
     expect(model.habits.items.length).toBe(0)
     expect(model.trend).toBeUndefined()
   })

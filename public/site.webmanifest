@@ -1,6 +1,8 @@
 {
+  "id": "/",
   "name": "Nuba",
   "short_name": "Nuba",
+  "start_url": "/",
   "icons": [
     {
       "src": "/brand/dark/android-chrome-192x192.png",

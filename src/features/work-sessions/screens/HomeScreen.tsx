@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   ArrowUpRight,
+  CalendarDays,
   Coffee,
   LoaderCircle,
   Pause,
@@ -10,7 +11,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import { useOutletContext } from 'react-router-dom'
+import { useNavigate, useOutletContext } from 'react-router-dom'
 import { useTodayWorkSessionQuery } from '../hooks/useTodayWorkSessionQuery'
 import { useLiveTodayMetrics } from '../hooks/useLiveTodayMetrics'
 import { useSessionActions } from '../hooks/useSessionActions'
@@ -23,7 +24,9 @@ import { PrimaryButton } from '../../../shared/ui/buttons/Button'
 import { ErrorState, LoadingState } from '../../../shared/ui/states/StateViews'
 import { InlineAlert } from '../../../shared/ui/feedback/InlineAlert'
 import {
+  formatBusinessDateIso,
   formatClockFromSeconds,
+  formatDateShort,
   formatMinutesCompact,
   formatTime,
 } from '../../../shared/utils/format'
@@ -109,6 +112,7 @@ function MetricChip({
 }
 
 export function HomeScreen() {
+  const navigate = useNavigate()
   const { setHomeSummaryMeta } = useOutletContext<AppShellOutletContext>()
   const todayQuery = useTodayWorkSessionQuery()
   const actions = useSessionActions()
@@ -126,9 +130,17 @@ export function HomeScreen() {
   })
 
   const today = todayQuery.data
+  const carryOverSession = today?.carryOverSession ?? null
+  const autoClosedPreviousSession = actions.startMutation.data?.autoClosedPreviousSession ?? null
+  const hasCarryOverSession = Boolean(carryOverSession)
+  const carryOverDate = carryOverSession
+    ? formatBusinessDateIso(carryOverSession.startTime)
+    : null
   const workedTodayMinutes = Math.floor(liveMetrics.liveWorkedSeconds / 60)
   const headerSummaryMeta = today
-    ? today.summary.hasOpenSession || today.summary.sessionCount > 0
+    ? hasCarryOverSession
+      ? `Pendiente · ${formatDateShort(carryOverSession?.startTime ?? today.summary.date)}`
+      : today.summary.hasOpenSession || today.summary.sessionCount > 0
       ? `Hoy · ${formatMinutesTight(workedTodayMinutes)} trabajados`
       : 'Hoy · listo para empezar'
     : null
@@ -143,15 +155,10 @@ export function HomeScreen() {
     },
     [setHomeSummaryMeta],
   )
+  const showStopConfirm = isStopConfirmOpen && (today?.summary.hasOpenSession ?? false)
 
   useEffect(() => {
-    if (!todayQuery.data?.summary.hasOpenSession) {
-      setIsStopConfirmOpen(false)
-    }
-  }, [todayQuery.data?.summary.hasOpenSession])
-
-  useEffect(() => {
-    if (!isStopConfirmOpen) {
+    if (!showStopConfirm) {
       return
     }
 
@@ -166,7 +173,7 @@ export function HomeScreen() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [isStopConfirmOpen])
+  }, [showStopConfirm])
 
   if (todayQuery.isLoading && !today) {
     return (
@@ -220,25 +227,36 @@ export function HomeScreen() {
     today.summary.targetMinutes === 0
       ? 'Jornada flexible'
       : `Jornada ${formatMinutesTight(today.summary.targetMinutes)}`
+  const entryReferenceTime =
+    carryOverSession?.startTime ?? today.sessions.at(0)?.startTime ?? null
+  const entryChipLabel = entryReferenceTime
+    ? `Entrada ${formatTime(entryReferenceTime)}`
+    : null
   const outingsCount = today.summary.outingsCount ?? 0
   const outingsInlineLabel = `${outingsCount} salidas`
   const outingsChipLabel = `Salidas ${outingsCount}`
   const contextHeadline = today.summary.hasOpenSession
-    ? today.paused
-      ? isLunchPause
-        ? 'En pausa · comida'
-        : 'Jornada en pausa'
-      : estimatedTime === '--:--'
-        ? 'Jornada en marcha'
-        : `Salida estimada ${estimatedTime}`
-    : today.summary.sessionCount > 0
-      ? estimatedTime === '--:--'
-        ? 'Jornada cerrada'
-        : `Terminaste a las ${estimatedTime}`
-      : dayPlanLabel
+    ? hasCarryOverSession
+      ? `Jornada pendiente del ${formatDateShort(carryOverSession?.startTime ?? today.summary.date)}`
+      : today.paused
+        ? isLunchPause
+          ? 'En pausa · comida'
+          : 'Jornada en pausa'
+        : estimatedTime === '--:--'
+          ? 'Jornada en marcha'
+          : `Salida estimada ${estimatedTime}`
+    : hasCarryOverSession
+      ? `Jornada pendiente del ${formatDateShort(carryOverSession?.startTime ?? today.summary.date)}`
+      : today.summary.sessionCount > 0
+        ? estimatedTime === '--:--'
+          ? 'Jornada cerrada'
+          : `Terminaste a las ${estimatedTime}`
+        : dayPlanLabel
   const contextDetail = actions.hasPendingAction
     ? 'Actualizando el estado de tu jornada.'
-    : today.summary.hasOpenSession
+    : hasCarryOverSession
+      ? 'Antes de fichar hoy, revisa esa jornada en Calendario o activa el cierre automático en Ajustes.'
+      : today.summary.hasOpenSession
       ? today.paused
         ? isLunchPause
           ? 'El tiempo trabajado está detenido. Reanuda cuando vuelvas.'
@@ -258,14 +276,18 @@ export function HomeScreen() {
           ? 'Hoy fichas solo si lo necesitas.'
           : 'Todo listo para empezar.'
   const statusChipLabel = today.summary.hasOpenSession
-    ? today.paused
-      ? isLunchPause
-        ? 'Pausa comida'
-        : 'En pausa'
-      : 'Trabajando'
-    : today.summary.sessionCount > 0
-      ? 'Completada'
-      : 'Sin iniciar'
+    ? hasCarryOverSession
+      ? 'Pendiente'
+      : today.paused
+        ? isLunchPause
+          ? 'Pausa comida'
+          : 'En pausa'
+        : 'Trabajando'
+    : hasCarryOverSession
+      ? 'Pendiente'
+      : today.summary.sessionCount > 0
+        ? 'Completada'
+        : 'Sin iniciar'
   const specialDayLabel =
     today.summary.specialDayName ||
     (today.summary.holiday
@@ -315,12 +337,26 @@ export function HomeScreen() {
         ? 'rgba(196, 166, 104, 0.4)'
         : 'rgba(124, 158, 255, 0.52)'
   const primaryAction = !today.summary.hasOpenSession
-    ? {
-        icon: Play,
-        label: today.summary.sessionCount > 0 ? 'Iniciar otra sesión' : 'Fichar entrada',
-        loading: actions.startMutation.isPending,
-        onClick: () => actions.startMutation.mutate(),
-      }
+    ? hasCarryOverSession && carryOverDate
+      ? {
+          icon: CalendarDays,
+          label: 'Revisar jornada pendiente',
+          loading: false,
+          onClick: () => {
+            const carryOverDateValue = new Date(`${carryOverDate}T12:00:00Z`)
+            navigate(
+              `/calendar?year=${carryOverDateValue.getUTCFullYear()}&month=${
+                carryOverDateValue.getUTCMonth() + 1
+              }&date=${carryOverDate}`,
+            )
+          },
+        }
+      : {
+          icon: Play,
+          label: today.summary.sessionCount > 0 ? 'Iniciar otra sesión' : 'Fichar entrada',
+          loading: actions.startMutation.isPending,
+          onClick: () => actions.startMutation.mutate(),
+        }
     : today.paused
       ? {
           icon: Play,
@@ -434,6 +470,21 @@ export function HomeScreen() {
   const stopConfirmDescription = hasPausedSession
     ? 'Se guardará la salida con el estado actual.'
     : 'Se guardará la hora actual como salida.'
+  const openCalendarDate = (date: string) => {
+    const calendarDateValue = new Date(`${date}T12:00:00Z`)
+
+    navigate(
+      `/calendar?year=${calendarDateValue.getUTCFullYear()}&month=${
+        calendarDateValue.getUTCMonth() + 1
+      }&date=${date}`,
+    )
+  }
+  const autoClosedDateLabel = autoClosedPreviousSession
+    ? formatDateShort(`${autoClosedPreviousSession.workDate}T12:00:00Z`)
+    : null
+  const autoClosedEndTimeLabel = autoClosedPreviousSession
+    ? formatTime(autoClosedPreviousSession.endTime)
+    : null
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto overscroll-contain">
@@ -442,6 +493,23 @@ export function HomeScreen() {
       <div className="pointer-events-none absolute left-1/2 top-[37%] h-[8rem] w-[10rem] -translate-x-1/2 -translate-y-1/2 bg-[radial-gradient(ellipse_at_50%_75%,_rgb(103_214_165_/_0.03),_transparent_68%)] blur-[58px]" />
 
       <section className="relative flex min-h-full flex-1 flex-col gap-2.5 px-0.5 pb-1 pt-1 sm:gap-3">
+        {autoClosedPreviousSession && autoClosedDateLabel && autoClosedEndTimeLabel ? (
+          <InlineAlert tone="warning" title="Te olvidaste de desfichar">
+            <p>
+              Se hizo un desfichaje automático a las {autoClosedEndTimeLabel} para poder
+              abrir hoy. Revisa el {autoClosedDateLabel} en Calendario y añade la hora de
+              salida real si fue otra.
+            </p>
+            <button
+              type="button"
+              onClick={() => openCalendarDate(autoClosedPreviousSession.workDate)}
+              className="mt-2 inline-flex rounded-full border border-white/[0.1] bg-white/[0.05] px-3 py-1.5 text-xs font-semibold text-nuba-text transition hover:border-nuba-brand/28 hover:bg-nuba-brand/[0.08]"
+            >
+              Revisar ese día
+            </button>
+          </InlineAlert>
+        ) : null}
+
         <div className="flex items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className={compactStatusClassName}>
@@ -633,7 +701,11 @@ export function HomeScreen() {
               </div>
 
               <div className="flex flex-wrap items-center justify-center gap-2">
-                <MetricChip icon={Play} label={dayPlanLabel} tone="brand" />
+                <MetricChip
+                  icon={entryChipLabel ? Play : CalendarDays}
+                  label={entryChipLabel ?? dayPlanLabel}
+                  tone="brand"
+                />
                 <MetricChip icon={Coffee} label={mealChipLabel} tone="break" />
                 <MetricChip icon={ArrowUpRight} label={outingsChipLabel} />
               </div>
@@ -760,8 +832,16 @@ export function HomeScreen() {
         </InlineAlert>
       ) : null}
 
+      {hasCarryOverSession && carryOverSession ? (
+        <InlineAlert tone="warning" title="Hay una jornada anterior todavía abierta">
+          {`La sesión del ${formatDateShort(
+            carryOverSession.startTime,
+          )} sigue pendiente. Corrígela desde Calendario antes de fichar hoy.`}
+        </InlineAlert>
+      ) : null}
+
       <AnimatePresence>
-        {isStopConfirmOpen ? (
+        {showStopConfirm ? (
           <>
             <motion.button
               type="button"

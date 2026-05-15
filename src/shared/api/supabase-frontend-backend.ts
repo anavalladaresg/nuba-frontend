@@ -19,6 +19,7 @@ import type {
   ManualEdit,
   TodayWorkSessionsResponse,
   WorkBreak,
+  WorkSessionAutoCloseNotice,
   WorkSession,
   WorkSessionDetailResponse,
   WorkSessionHistoryResponse,
@@ -40,6 +41,10 @@ import type {
   DashboardStatisticsResponse,
   DashboardWorkPattern,
 } from '../types/statistics'
+import type {
+  PushSubscriptionPayload,
+  PushSubscriptionsResponse,
+} from '../types/notifications'
 import { buildWorkSessionsCsv, buildWorkSessionsPdf } from '../utils/export-report'
 
 type SupabaseFrontendRequestOptions = {
@@ -53,6 +58,7 @@ type AppUserRow = Database['public']['Tables']['app_users']['Row']
 type BreakSessionRow = Database['public']['Tables']['break_sessions']['Row']
 type CalendarSpecialDayRow = Database['public']['Tables']['calendar_special_days']['Row']
 type ManualEditLogRow = Database['public']['Tables']['manual_edit_logs']['Row']
+type PushSubscriptionRow = Database['public']['Tables']['push_subscriptions']['Row']
 type NotificationSettingsRow = Database['public']['Tables']['notification_settings']['Row']
 type UserDailyGoalRow = Database['public']['Tables']['user_daily_goals']['Row']
 type UserWorkSettingsRow = Database['public']['Tables']['user_work_settings']['Row']
@@ -96,7 +102,14 @@ const DEFAULT_WORK_SETTINGS = {
   defaultDailyMinutes: null,
   lunchCountsAsWorkTime: false,
   darkModeEnabled: true,
+  autoCompleteForgottenCheckout: false,
+  autoCompleteGraceMinutes: 30,
 }
+
+const AUTO_COMPLETE_LOG_FIELD = 'AUTO_COMPLETE'
+const OUTING_LOG_FIELD = 'OUTING'
+const SESSION_EDIT_LOG_FIELD = 'SESSION_EDIT'
+const FALLBACK_AUTO_COMPLETE_TARGET_MINUTES = 480
 
 const DAY_OF_WEEK_ORDER: DayOfWeek[] = [
   'MONDAY',
@@ -154,6 +167,80 @@ const isWeekendDate = (date: string) => {
 
 const minutesBetween = (startIso: string, endIso: string) =>
   Math.max(0, differenceInMinutes(new Date(endIso), new Date(startIso)))
+
+const formatMinutesLabel = (minutes: number) => {
+  const safeMinutes = Math.max(0, Math.trunc(minutes))
+  const hours = Math.floor(safeMinutes / 60)
+  const remainder = safeMinutes % 60
+
+  if (hours === 0) {
+    return `${safeMinutes}m`
+  }
+
+  if (remainder === 0) {
+    return `${hours}h`
+  }
+
+  return `${hours}h ${remainder.toString().padStart(2, '0')}m`
+}
+
+const buildAutoCompleteReason = (graceMinutes: number) =>
+  `Cierre automático tras ${formatMinutesLabel(graceMinutes)} de margen por olvido de desfichaje.`
+
+const normalizeAutoCompleteGraceMinutes = (value: number | null | undefined) =>
+  typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(720, Math.max(0, Math.trunc(value)))
+    : DEFAULT_WORK_SETTINGS.autoCompleteGraceMinutes
+
+const parseAutoCompletePayload = (value: string | null) => {
+  if (!value) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(value) as {
+      endTime?: string
+      graceMinutes?: number
+    }
+
+    if (
+      typeof parsed.endTime !== 'string' ||
+      typeof parsed.graceMinutes !== 'number' ||
+      !Number.isFinite(parsed.graceMinutes)
+    ) {
+      return null
+    }
+
+    return {
+      endTime: parsed.endTime,
+      graceMinutes: normalizeAutoCompleteGraceMinutes(parsed.graceMinutes),
+    }
+  } catch {
+    return null
+  }
+}
+
+const buildAutoCloseNotice = ({
+  endTime,
+  graceMinutes,
+  sessionId,
+  workDate,
+}: {
+  endTime: string
+  graceMinutes: number
+  sessionId: string
+  workDate: string
+}): WorkSessionAutoCloseNotice => ({
+  sessionId,
+  workDate,
+  endTime,
+  graceMinutes,
+  message: `Se completó el fichaje automáticamente a las ${formatInTimeZone(
+    endTime,
+    env.businessTimeZone,
+    'HH:mm',
+  )} tras ${formatMinutesLabel(graceMinutes)} de margen porque te olvidaste de hacerlo tú.`,
+})
 
 const normalizeBreakType = (value: string | null | undefined): BreakType =>
   value === 'OTHER' ? 'OTHER' : 'LUNCH'
@@ -328,15 +415,47 @@ const toWorkBreak = (workBreak: BreakSessionRow, nowIso: string): WorkBreak => (
 const toManualEdit = (log: ManualEditLogRow): ManualEdit => ({
   id: log.id,
   editedAt: log.edited_at,
+  fieldChanged: log.field_changed,
+  oldValue: log.old_value,
+  newValue: log.new_value,
   reason: log.reason,
-  notes: log.new_value,
+  notes: log.field_changed === AUTO_COMPLETE_LOG_FIELD ? null : log.new_value,
 })
 
-const getLatestReason = (logs: ManualEditLogRow[]) =>
+const getLatestSessionLog = (logs: ManualEditLogRow[]) =>
   [...logs]
-    .filter((log) => log.field_changed !== 'OUTING')
+    .filter((log) => log.field_changed !== OUTING_LOG_FIELD)
     .sort((left, right) => new Date(right.edited_at).getTime() - new Date(left.edited_at).getTime())
-    .at(0)?.reason ?? null
+    .at(0) ?? null
+
+const getAutoCloseNoticeFromLogs = (
+  session: WorkSessionRow,
+  logs: ManualEditLogRow[],
+): WorkSessionAutoCloseNotice | null => {
+  const autoCloseLog = [...logs]
+    .filter((log) => log.field_changed === AUTO_COMPLETE_LOG_FIELD)
+    .sort((left, right) => new Date(right.edited_at).getTime() - new Date(left.edited_at).getTime())
+    .at(0)
+
+  if (!autoCloseLog) {
+    return null
+  }
+
+  const payload = parseAutoCompletePayload(autoCloseLog.new_value)
+  const graceMinutes = payload?.graceMinutes ?? normalizeAutoCompleteGraceMinutes(null)
+  const endTime = payload?.endTime ?? session.end_time
+
+  if (!endTime) {
+    return null
+  }
+
+  return buildAutoCloseNotice({
+    sessionId: session.id,
+    workDate: session.work_date,
+    endTime,
+    graceMinutes,
+  })
+}
 
 const toWorkSession = (
   session: WorkSessionRow,
@@ -347,6 +466,7 @@ const toWorkSession = (
   const sortedBreaks = [...breaks].sort(
     (left, right) => new Date(left.start_time).getTime() - new Date(right.start_time).getTime(),
   )
+  const latestSessionLog = getLatestSessionLog(manualEditLogs)
   const isClosedSession = Boolean(session.end_time)
   const endTime = session.end_time ?? nowIso
   const breakMinutes = isClosedSession
@@ -362,7 +482,10 @@ const toWorkSession = (
     startTime: session.start_time,
     endTime: session.end_time,
     notes: session.notes,
-    reason: getLatestReason(manualEditLogs),
+    reason: latestSessionLog?.reason ?? null,
+    editType: latestSessionLog?.field_changed ?? null,
+    editedAt: latestSessionLog?.edited_at ?? null,
+    autoCloseNotice: getAutoCloseNoticeFromLogs(session, manualEditLogs),
     workedMinutes,
     breakMinutes,
   }
@@ -430,7 +553,7 @@ const createTimeline = (
 }
 
 const getOutingsCount = (manualEditLogs: ManualEditLogRow[]) =>
-  manualEditLogs.filter((log) => log.field_changed === 'OUTING').length
+  manualEditLogs.filter((log) => log.field_changed === OUTING_LOG_FIELD).length
 
 const buildDaySummary = (
   date: string,
@@ -774,6 +897,9 @@ const ensureWorkSettingsRow = async (userId: string, path: string) => {
       default_daily_minutes: DEFAULT_WORK_SETTINGS.defaultDailyMinutes,
       lunch_counts_as_work_time: DEFAULT_WORK_SETTINGS.lunchCountsAsWorkTime,
       dark_mode_enabled: DEFAULT_WORK_SETTINGS.darkModeEnabled,
+      auto_complete_forgotten_checkout:
+        DEFAULT_WORK_SETTINGS.autoCompleteForgottenCheckout,
+      auto_complete_grace_minutes: DEFAULT_WORK_SETTINGS.autoCompleteGraceMinutes,
     })
     .select('*')
     .single()
@@ -833,6 +959,20 @@ const ensureNotificationSettingsRow = async (userId: string, path: string) => {
 const toDailyGoal = (row: UserDailyGoalRow): DailyGoal => ({
   dayOfWeek: DB_TO_DAY_OF_WEEK[row.day_of_week] ?? 'MONDAY',
   targetMinutes: row.target_minutes,
+})
+
+const toPushSubscriptionRecord = (row: PushSubscriptionRow) => ({
+  id: row.id,
+  endpoint: row.endpoint,
+  p256dh: row.p256dh_key,
+  auth: row.auth_key,
+  userAgent: row.user_agent,
+  platform: row.platform,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  lastSeenAt: row.last_seen_at,
+  lastSuccessAt: row.last_success_at,
+  failureCount: row.failure_count,
 })
 
 const ensureDailyGoals = async (userId: string, path: string) => {
@@ -974,6 +1114,116 @@ const fetchOpenSessionBundle = async (userId: string, signal?: AbortSignal) => {
   return bundle ?? null
 }
 
+const resolveAutoCompleteTargetMinutes = (
+  session: WorkSessionRow,
+  workSettings: UserWorkSettingsRow,
+) => {
+  if (session.goal_minutes > 0) {
+    return Math.max(0, Math.trunc(session.goal_minutes))
+  }
+
+  if (
+    typeof workSettings.default_daily_minutes === 'number' &&
+    Number.isFinite(workSettings.default_daily_minutes)
+  ) {
+    return Math.max(0, Math.trunc(workSettings.default_daily_minutes))
+  }
+
+  return FALLBACK_AUTO_COMPLETE_TARGET_MINUTES
+}
+
+const getAutoCompleteEndTime = (
+  session: WorkSessionRow,
+  breaks: BreakSessionRow[],
+  workSettings: UserWorkSettingsRow,
+) => {
+  const graceMinutes = normalizeAutoCompleteGraceMinutes(
+    workSettings.auto_complete_grace_minutes,
+  )
+  const closedBreakMinutes = breaks.reduce((total, workBreak) => {
+    if (!workBreak.end_time) {
+      return total
+    }
+
+    return total + minutesBetween(workBreak.start_time, workBreak.end_time)
+  }, 0)
+  const targetMinutes =
+    resolveAutoCompleteTargetMinutes(session, workSettings) + closedBreakMinutes + graceMinutes
+
+  return {
+    graceMinutes,
+    endTime: addMinutes(new Date(session.start_time), targetMinutes).toISOString(),
+  }
+}
+
+const maybeAutoCompleteCarryOverSession = async ({
+  nowIso,
+  signal,
+  userId,
+  workSettings,
+}: {
+  nowIso: string
+  signal?: AbortSignal
+  userId: string
+  workSettings: UserWorkSettingsRow
+}): Promise<WorkSessionAutoCloseNotice | null> => {
+  if (!workSettings.auto_complete_forgotten_checkout) {
+    return null
+  }
+
+  const openBundle = await fetchOpenSessionBundle(userId, signal)
+
+  if (!openBundle) {
+    return null
+  }
+
+  const today = getBusinessDateFromInstant(nowIso)
+
+  if (openBundle.session.work_date >= today) {
+    return null
+  }
+
+  if (openBundle.breaks.some((workBreak) => workBreak.end_time === null)) {
+    return null
+  }
+
+  const { endTime, graceMinutes } = getAutoCompleteEndTime(
+    openBundle.session,
+    openBundle.breaks,
+    workSettings,
+  )
+
+  if (new Date(endTime) > new Date(nowIso)) {
+    return null
+  }
+
+  await persistSessionMetrics(openBundle.session, openBundle.breaks, endTime, 'EDITED', {
+    end_time: endTime,
+    updated_at: nowIso,
+  })
+
+  const logInsert = await supabase.from('manual_edit_logs').insert({
+    work_session_id: openBundle.session.id,
+    user_id: userId,
+    field_changed: AUTO_COMPLETE_LOG_FIELD,
+    old_value: openBundle.session.end_time,
+    new_value: JSON.stringify({ endTime, graceMinutes }),
+    reason: buildAutoCompleteReason(graceMinutes),
+    edited_at: nowIso,
+  })
+
+  if (logInsert.error) {
+    throw logInsert.error
+  }
+
+  return buildAutoCloseNotice({
+    sessionId: openBundle.session.id,
+    workDate: openBundle.session.work_date,
+    endTime,
+    graceMinutes,
+  })
+}
+
 const persistSessionMetrics = async (
   session: WorkSessionRow,
   breaks: BreakSessionRow[],
@@ -1032,7 +1282,7 @@ const buildDetailResponse = (
   breaks: bundle.breaks.map((workBreak) => toWorkBreak(workBreak, nowIso)),
   timeline: createTimeline(bundle.session, bundle.breaks),
   manualEdits: bundle.manualEditLogs
-    .filter((log) => log.field_changed !== 'OUTING')
+    .filter((log) => log.field_changed !== OUTING_LOG_FIELD)
     .map(toManualEdit)
     .sort(
       (left, right) =>
@@ -1051,21 +1301,108 @@ const validateRange = (path: string, from?: string, to?: string) => {
 const validateEditableSessionPayload = (
   payload: WorkSessionUpdatePayload,
   path: string,
+  options: {
+    allowOpenSession: boolean
+  },
 ) => {
   const fieldErrors: FieldError[] = []
+  const sessionStartMs = new Date(payload.startTime).getTime()
+  const sessionEndMs = payload.endTime ? new Date(payload.endTime).getTime() : null
 
-  if (new Date(payload.endTime) <= new Date(payload.startTime)) {
+  if (sessionEndMs !== null && sessionEndMs <= sessionStartMs) {
     fieldErrors.push({
       field: 'endTime',
       message: 'La hora de fin debe ser posterior al inicio.',
     })
   }
 
-  payload.breaks.forEach((workBreak, index) => {
-    if (!workBreak.endTime || new Date(workBreak.endTime) <= new Date(workBreak.startTime)) {
+  if (sessionEndMs === null && !options.allowOpenSession) {
+    fieldErrors.push({
+      field: 'endTime',
+      message: 'Las jornadas cerradas deben mantener una hora de salida.',
+    })
+  }
+
+  const breaksWithIndex = payload.breaks.map((workBreak, index) => ({
+    index,
+    ...workBreak,
+  }))
+  const sortedBreaks = [...breaksWithIndex].sort(
+    (left, right) =>
+      new Date(left.startTime).getTime() - new Date(right.startTime).getTime(),
+  )
+
+  sortedBreaks.forEach((workBreak, sortedIndex) => {
+    const breakStartMs = new Date(workBreak.startTime).getTime()
+    const breakEndMs = workBreak.endTime ? new Date(workBreak.endTime).getTime() : Number.NaN
+
+    if (!workBreak.endTime && sessionEndMs !== null) {
       fieldErrors.push({
-        field: `breaks.${index}.endTime`,
+        field: `breaks.${workBreak.index}.endTime`,
+        message: 'Si la jornada está cerrada, todos los descansos deben quedar cerrados.',
+      })
+
+      return
+    }
+
+    if (!workBreak.endTime && !options.allowOpenSession) {
+      fieldErrors.push({
+        field: `breaks.${workBreak.index}.endTime`,
+        message: 'Solo las jornadas abiertas pueden mantener un descanso en curso.',
+      })
+
+      return
+    }
+
+    if (workBreak.endTime && breakEndMs <= breakStartMs) {
+      fieldErrors.push({
+        field: `breaks.${workBreak.index}.endTime`,
         message: 'Cada pausa debe tener un fin posterior al inicio.',
+      })
+
+      return
+    }
+
+    if (breakStartMs < sessionStartMs) {
+      fieldErrors.push({
+        field: `breaks.${workBreak.index}.startTime`,
+        message: 'Las pausas deben quedar dentro de la jornada.',
+      })
+    }
+
+    if (workBreak.endTime && sessionEndMs !== null && breakEndMs > sessionEndMs) {
+      fieldErrors.push({
+        field: `breaks.${workBreak.index}.startTime`,
+        message: 'Las pausas deben quedar dentro de la jornada.',
+      })
+    }
+
+    const previousBreak = sortedBreaks[sortedIndex - 1]
+    if (previousBreak && !previousBreak.endTime) {
+      fieldErrors.push({
+        field: `breaks.${workBreak.index}.startTime`,
+        message: 'Solo el último descanso puede seguir abierto.',
+      })
+    }
+
+    if (previousBreak?.endTime) {
+      const previousBreakEndMs = new Date(previousBreak.endTime).getTime()
+
+      if (breakStartMs < previousBreakEndMs) {
+        fieldErrors.push({
+          field: `breaks.${workBreak.index}.startTime`,
+          message: 'Las pausas no pueden solaparse entre sí.',
+        })
+      }
+    }
+
+    if (
+      !workBreak.endTime &&
+      sortedIndex !== sortedBreaks.length - 1
+    ) {
+      fieldErrors.push({
+        field: `breaks.${workBreak.index}.endTime`,
+        message: 'Solo el último descanso puede seguir abierto.',
       })
     }
   })
@@ -1073,6 +1410,16 @@ const validateEditableSessionPayload = (
   if (fieldErrors.length) {
     throw createApiError(path, 400, 'Hay errores de validación en la jornada.', fieldErrors)
   }
+}
+
+const getUpdatedSessionStatus = (payload: WorkSessionUpdatePayload): WorkSessionStatus => {
+  if (payload.endTime) {
+    return 'EDITED'
+  }
+
+  return payload.breaks.some((workBreak) => workBreak.endTime === null)
+    ? 'PAUSED'
+    : 'ACTIVE'
 }
 
 export async function supabaseFrontendRequest<TSchema>(
@@ -1096,6 +1443,10 @@ export async function supabaseFrontendRequest<TSchema>(
       return {
         sameHoursEachDay: workSettings.same_hours_every_day,
         timeZone: user.timezone,
+        autoCompleteForgottenCheckout: workSettings.auto_complete_forgotten_checkout,
+        autoCompleteGraceMinutes: normalizeAutoCompleteGraceMinutes(
+          workSettings.auto_complete_grace_minutes,
+        ),
       } satisfies MeSettings as TSchema
     }
 
@@ -1116,6 +1467,10 @@ export async function supabaseFrontendRequest<TSchema>(
           .from('user_work_settings')
           .update({
             same_hours_every_day: payload.sameHoursEachDay,
+            auto_complete_forgotten_checkout: payload.autoCompleteForgottenCheckout,
+            auto_complete_grace_minutes: normalizeAutoCompleteGraceMinutes(
+              payload.autoCompleteGraceMinutes,
+            ),
             updated_at: nowIso,
           })
           .eq('user_id', user.id),
@@ -1227,13 +1582,89 @@ export async function supabaseFrontendRequest<TSchema>(
       return undefined as TSchema
     }
 
+    if (path === '/api/notifications/push-subscriptions' && method === 'GET') {
+      const user = await getOrCreateCurrentUserRow(path)
+      const subscriptions = await supabase
+        .from('push_subscriptions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false })
+
+      if (subscriptions.error) {
+        throw subscriptions.error
+      }
+
+      return {
+        items: asRows<PushSubscriptionRow>(subscriptions.data).map(toPushSubscriptionRecord),
+      } satisfies PushSubscriptionsResponse as TSchema
+    }
+
+    if (path === '/api/notifications/push-subscriptions' && method === 'PUT') {
+      const user = await getOrCreateCurrentUserRow(path)
+      const payload = body as PushSubscriptionPayload
+      await ensureNotificationSettingsRow(user.id, path)
+
+      const upsert = await supabase
+        .from('push_subscriptions')
+        .upsert(
+          {
+            user_id: user.id,
+            endpoint: payload.endpoint,
+            p256dh_key: payload.p256dh,
+            auth_key: payload.auth,
+            user_agent: payload.userAgent,
+            platform: payload.platform,
+            updated_at: nowIso,
+            last_seen_at: nowIso,
+          },
+          {
+            onConflict: 'endpoint',
+          },
+        )
+
+      if (upsert.error) {
+        throw upsert.error
+      }
+
+      return undefined as TSchema
+    }
+
+    if (path === '/api/notifications/push-subscriptions/unsubscribe' && method === 'POST') {
+      const user = await getOrCreateCurrentUserRow(path)
+      const payload = body as { endpoint?: string }
+
+      if (!payload.endpoint) {
+        throw createApiError(path, 400, 'Necesitamos el endpoint de la suscripción a eliminar.')
+      }
+
+      const remove = await supabase
+        .from('push_subscriptions')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('endpoint', payload.endpoint)
+
+      if (remove.error) {
+        throw remove.error
+      }
+
+      return undefined as TSchema
+    }
+
     if (path === '/api/work-sessions/today' && method === 'GET') {
       const user = await getOrCreateCurrentUserRow(path)
+      const workSettings = await ensureWorkSettingsRow(user.id, path)
+      await maybeAutoCompleteCarryOverSession({
+        userId: user.id,
+        signal,
+        nowIso,
+        workSettings,
+      })
       const goals = await ensureDailyGoals(user.id, path)
       const today = getBusinessDateFromInstant(nowIso)
-      const [bundles, specialDays] = await Promise.all([
+      const [bundles, specialDays, openBundle] = await Promise.all([
         fetchSessionsForDate(user.id, today, signal),
         fetchSpecialDaysInRange(today, today),
+        fetchOpenSessionBundle(user.id, signal),
       ])
       const summary = buildDaySummary(
         today,
@@ -1242,8 +1673,13 @@ export async function supabaseFrontendRequest<TSchema>(
         specialDays.find((day) => day.special_date === today) ?? null,
         nowIso,
       )
-      const openBundle = bundles.find((bundle) => !bundle.session.end_time) ?? null
-      const activeBreak = openBundle?.breaks.find((workBreak) => workBreak.end_time === null) ?? null
+      const todayOpenBundle = bundles.find((bundle) => !bundle.session.end_time) ?? null
+      const activeBreak =
+        todayOpenBundle?.breaks.find((workBreak) => workBreak.end_time === null) ?? null
+      const carryOverSession =
+        openBundle && openBundle.session.work_date !== today
+          ? toWorkSession(openBundle.session, openBundle.breaks, openBundle.manualEditLogs, nowIso)
+          : null
 
       return {
         summary,
@@ -1255,14 +1691,34 @@ export async function supabaseFrontendRequest<TSchema>(
         timeline: sortEventsAsc(
           bundles.flatMap((bundle) => createTimeline(bundle.session, bundle.breaks)),
         ),
+        carryOverSession,
       } satisfies TodayWorkSessionsResponse as TSchema
     }
 
     if (path === '/api/work-sessions/start' && method === 'POST') {
       const user = await getOrCreateCurrentUserRow(path)
+      const workSettings = await ensureWorkSettingsRow(user.id, path)
+      const autoClosedPreviousSession = await maybeAutoCompleteCarryOverSession({
+        userId: user.id,
+        signal,
+        nowIso,
+        workSettings,
+      })
       const openBundle = await fetchOpenSessionBundle(user.id, signal)
 
       if (openBundle) {
+        if (openBundle.session.work_date !== getBusinessDateFromInstant(nowIso)) {
+          throw createApiError(
+            path,
+            409,
+            `Tienes una jornada pendiente del ${formatInTimeZone(
+              openBundle.session.start_time,
+              env.businessTimeZone,
+              'dd/MM',
+            )}. Ajusta la salida desde Calendario antes de fichar hoy.`,
+          )
+        }
+
         throw createApiError(path, 409, 'Ya existe una jornada abierta.')
       }
 
@@ -1286,7 +1742,9 @@ export async function supabaseFrontendRequest<TSchema>(
         throw insert.error
       }
 
-      return undefined as TSchema
+      return {
+        autoClosedPreviousSession,
+      } as TSchema
     }
 
     if (path === '/api/work-sessions/pause' && method === 'POST') {
@@ -1345,7 +1803,7 @@ export async function supabaseFrontendRequest<TSchema>(
       const insert = await supabase.from('manual_edit_logs').insert({
         work_session_id: bundle.session.id,
         user_id: user.id,
-        field_changed: 'OUTING',
+        field_changed: OUTING_LOG_FIELD,
         old_value: String(currentCount),
         new_value: String(currentCount + 1),
         reason: 'Salida momentánea registrada desde Home.',
@@ -1649,7 +2107,6 @@ export async function supabaseFrontendRequest<TSchema>(
       const user = await getOrCreateCurrentUserRow(path)
       const sessionId = detailMatch[1]
       const payload = body as WorkSessionUpdatePayload
-      validateEditableSessionPayload(payload, path)
 
       const sessionResult = await supabase
         .from('work_sessions')
@@ -1668,9 +2125,9 @@ export async function supabaseFrontendRequest<TSchema>(
         throw createApiError(path, 404, 'No encontramos la jornada solicitada.')
       }
 
-      if (!session.end_time) {
-        throw createApiError(path, 409, 'Solo puedes editar jornadas cerradas en este prototipo.')
-      }
+      validateEditableSessionPayload(payload, path, {
+        allowOpenSession: !session.end_time,
+      })
 
       const deleteBreaks = await supabase
         .from('break_sessions')
@@ -1700,23 +2157,26 @@ export async function supabaseFrontendRequest<TSchema>(
         }
       }
 
+      const nextStatus = getUpdatedSessionStatus(payload)
+      const metricsReferenceEndTime = payload.endTime ?? nowIso
       const recomputedBreakMinutes = payload.breaks.reduce(
         (total, workBreak) =>
-          total + (workBreak.endTime ? minutesBetween(workBreak.startTime, workBreak.endTime) : 0),
+          total +
+          minutesBetween(workBreak.startTime, workBreak.endTime ?? metricsReferenceEndTime),
         0,
       )
       const workedMinutes = Math.max(
         0,
-        minutesBetween(payload.startTime, payload.endTime) - recomputedBreakMinutes,
+        minutesBetween(payload.startTime, metricsReferenceEndTime) - recomputedBreakMinutes,
       )
       const sessionUpdate = await supabase
         .from('work_sessions')
         .update({
           start_time: payload.startTime,
-          end_time: payload.endTime,
+          end_time: payload.endTime ?? null,
           work_date: getBusinessDateFromInstant(payload.startTime),
           notes: payload.notes ?? null,
-          status: 'EDITED',
+          status: nextStatus,
           worked_minutes: workedMinutes,
           break_minutes: recomputedBreakMinutes,
           extra_minutes: Math.max(0, workedMinutes - session.goal_minutes),
@@ -1731,7 +2191,7 @@ export async function supabaseFrontendRequest<TSchema>(
       const logInsert = await supabase.from('manual_edit_logs').insert({
         work_session_id: sessionId,
         user_id: user.id,
-        field_changed: 'SESSION_EDIT',
+        field_changed: SESSION_EDIT_LOG_FIELD,
         old_value: null,
         new_value: payload.notes ?? null,
         reason: payload.reason,

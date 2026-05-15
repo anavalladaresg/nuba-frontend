@@ -294,8 +294,14 @@ const strokeColor = (hex: string) => {
 }
 
 const toPdfLiteral = (value: string) =>
-  value
-    .replaceAll(/[^\x09\x0A\x0D\x20-\xFF]/g, '?')
+  Array.from(value)
+    .map((character) => {
+      const code = character.charCodeAt(0)
+      return code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d
+        ? '?'
+        : character
+    })
+    .join('')
     .replaceAll('\\', '\\\\')
     .replaceAll('(', '\\(')
     .replaceAll(')', '\\)')

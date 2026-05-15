@@ -44,6 +44,14 @@ export const workBreakSchema = z.object({
   open: z.boolean().optional().default(false),
 })
 
+export const workSessionAutoCloseNoticeSchema = z.object({
+  sessionId: z.string(),
+  workDate: isoDateSchema,
+  endTime: isoDateTimeSchema,
+  graceMinutes: z.number().int().min(0),
+  message: z.string(),
+})
+
 export const workSessionSchema = z.object({
   id: z.string(),
   status: workSessionStatusSchema,
@@ -51,6 +59,9 @@ export const workSessionSchema = z.object({
   endTime: isoDateTimeSchema.nullable().optional().default(null),
   notes: z.string().nullable().optional().default(null),
   reason: z.string().nullable().optional().default(null),
+  editType: z.string().nullable().optional().default(null),
+  editedAt: isoDateTimeSchema.nullable().optional().default(null),
+  autoCloseNotice: workSessionAutoCloseNoticeSchema.nullable().optional().default(null),
   workedMinutes: z.number().int().min(0).optional(),
   breakMinutes: z.number().int().min(0).optional(),
 })
@@ -69,6 +80,9 @@ export const workTimelineEventSchema = z.object({
 export const manualEditSchema = z.object({
   id: z.string().optional(),
   editedAt: isoDateTimeSchema.optional(),
+  fieldChanged: z.string().nullable().optional().default(null),
+  oldValue: z.string().nullable().optional().default(null),
+  newValue: z.string().nullable().optional().default(null),
   reason: z.string().nullable().optional().default(null),
   notes: z.string().nullable().optional().default(null),
 })
@@ -79,6 +93,7 @@ export const todayWorkSessionsResponseSchema = z.object({
   activeBreak: workBreakSchema.nullable().default(null),
   sessions: z.array(workSessionSchema).default([]),
   timeline: z.array(workTimelineEventSchema).default([]),
+  carryOverSession: workSessionSchema.nullable().default(null),
 })
 
 export const workSessionHistoryResponseSchema = z.object({
@@ -97,13 +112,17 @@ export const workSessionDetailResponseSchema = z.object({
   manualEdits: z.array(manualEditSchema).default([]),
 })
 
+export const workSessionStartResponseSchema = z.object({
+  autoClosedPreviousSession: workSessionAutoCloseNoticeSchema.nullable().default(null),
+})
+
 export const workSessionPausePayloadSchema = z.object({
   breakType: breakTypeSchema,
 })
 
 export const workSessionUpdatePayloadSchema = z.object({
   startTime: isoDateTimeSchema,
-  endTime: isoDateTimeSchema,
+  endTime: isoDateTimeSchema.nullable().optional().default(null),
   notes: z.string().trim().nullable().optional().default(null),
   reason: z.string().trim().min(3),
   breaks: z.array(
@@ -124,8 +143,10 @@ export type WorkBreak = z.infer<typeof workBreakSchema>
 export type WorkSession = z.infer<typeof workSessionSchema>
 export type WorkTimelineEvent = z.infer<typeof workTimelineEventSchema>
 export type ManualEdit = z.infer<typeof manualEditSchema>
+export type WorkSessionAutoCloseNotice = z.infer<typeof workSessionAutoCloseNoticeSchema>
 export type TodayWorkSessionsResponse = z.infer<typeof todayWorkSessionsResponseSchema>
 export type WorkSessionHistoryResponse = z.infer<typeof workSessionHistoryResponseSchema>
 export type WorkSessionDetailResponse = z.infer<typeof workSessionDetailResponseSchema>
+export type WorkSessionStartResponse = z.infer<typeof workSessionStartResponseSchema>
 export type WorkSessionPausePayload = z.infer<typeof workSessionPausePayloadSchema>
 export type WorkSessionUpdatePayload = z.infer<typeof workSessionUpdatePayloadSchema>
