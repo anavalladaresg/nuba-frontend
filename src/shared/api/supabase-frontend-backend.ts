@@ -1156,7 +1156,7 @@ const getAutoCompleteEndTime = (
   }
 }
 
-const maybeAutoCompleteCarryOverSession = async ({
+const maybeAutoCompleteOpenSession = async ({
   nowIso,
   signal,
   userId,
@@ -1179,7 +1179,7 @@ const maybeAutoCompleteCarryOverSession = async ({
 
   const today = getBusinessDateFromInstant(nowIso)
 
-  if (openBundle.session.work_date >= today) {
+  if (openBundle.session.work_date > today) {
     return null
   }
 
@@ -1653,7 +1653,7 @@ export async function supabaseFrontendRequest<TSchema>(
     if (path === '/api/work-sessions/today' && method === 'GET') {
       const user = await getOrCreateCurrentUserRow(path)
       const workSettings = await ensureWorkSettingsRow(user.id, path)
-      await maybeAutoCompleteCarryOverSession({
+      await maybeAutoCompleteOpenSession({
         userId: user.id,
         signal,
         nowIso,
@@ -1698,7 +1698,7 @@ export async function supabaseFrontendRequest<TSchema>(
     if (path === '/api/work-sessions/start' && method === 'POST') {
       const user = await getOrCreateCurrentUserRow(path)
       const workSettings = await ensureWorkSettingsRow(user.id, path)
-      const autoClosedPreviousSession = await maybeAutoCompleteCarryOverSession({
+      const autoClosedPreviousSession = await maybeAutoCompleteOpenSession({
         userId: user.id,
         signal,
         nowIso,

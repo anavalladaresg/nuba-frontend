@@ -214,6 +214,11 @@ export function HomeScreen() {
 
   const workedTodayClock = formatClockFromSeconds(workedTimer.displayTime)
   const lastSession = today.sessions.at(-1) ?? null
+  const latestAutoClosedSession =
+    lastSession?.autoCloseNotice && lastSession.reason?.toLowerCase().includes('cierre automático')
+      ? lastSession.autoCloseNotice
+      : null
+  const homeAutoCloseNotice = autoClosedPreviousSession ?? latestAutoClosedSession
   const estimatedTime =
     today.summary.projectedEndAt
       ? formatTime(today.summary.projectedEndAt)
@@ -479,12 +484,13 @@ export function HomeScreen() {
       }&date=${date}`,
     )
   }
-  const autoClosedDateLabel = autoClosedPreviousSession
-    ? formatDateShort(`${autoClosedPreviousSession.workDate}T12:00:00Z`)
+  const autoClosedDateLabel = homeAutoCloseNotice
+    ? formatDateShort(`${homeAutoCloseNotice.workDate}T12:00:00Z`)
     : null
-  const autoClosedEndTimeLabel = autoClosedPreviousSession
-    ? formatTime(autoClosedPreviousSession.endTime)
+  const autoClosedEndTimeLabel = homeAutoCloseNotice
+    ? formatTime(homeAutoCloseNotice.endTime)
     : null
+  const isTodayAutoCloseNotice = homeAutoCloseNotice?.workDate === today.summary.date
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto overscroll-contain">
@@ -493,16 +499,19 @@ export function HomeScreen() {
       <div className="pointer-events-none absolute left-1/2 top-[37%] h-[8rem] w-[10rem] -translate-x-1/2 -translate-y-1/2 bg-[radial-gradient(ellipse_at_50%_75%,_rgb(103_214_165_/_0.03),_transparent_68%)] blur-[58px]" />
 
       <section className="relative flex min-h-full flex-1 flex-col gap-2.5 px-0.5 pb-1 pt-1 sm:gap-3">
-        {autoClosedPreviousSession && autoClosedDateLabel && autoClosedEndTimeLabel ? (
-          <InlineAlert tone="warning" title="Te olvidaste de desfichar">
+        {homeAutoCloseNotice && autoClosedDateLabel && autoClosedEndTimeLabel ? (
+          <InlineAlert
+            tone="warning"
+            title={isTodayAutoCloseNotice ? 'Jornada cerrada automáticamente' : 'Te olvidaste de desfichar'}
+          >
             <p>
-              Se hizo un desfichaje automático a las {autoClosedEndTimeLabel} para poder
-              abrir hoy. Revisa el {autoClosedDateLabel} en Calendario y añade la hora de
-              salida real si fue otra.
+              {isTodayAutoCloseNotice
+                ? `La jornada se cerró automáticamente a las ${autoClosedEndTimeLabel} al superar el objetivo y el margen configurado. Revisa el ${autoClosedDateLabel} en Calendario y corrige la salida real si fue otra.`
+                : `Se hizo un desfichaje automático a las ${autoClosedEndTimeLabel} para poder abrir hoy. Revisa el ${autoClosedDateLabel} en Calendario y añade la hora de salida real si fue otra.`}
             </p>
             <button
               type="button"
-              onClick={() => openCalendarDate(autoClosedPreviousSession.workDate)}
+              onClick={() => openCalendarDate(homeAutoCloseNotice.workDate)}
               className="mt-2 inline-flex rounded-full border border-white/[0.1] bg-white/[0.05] px-3 py-1.5 text-xs font-semibold text-nuba-text transition hover:border-nuba-brand/28 hover:bg-nuba-brand/[0.08]"
             >
               Revisar ese día
