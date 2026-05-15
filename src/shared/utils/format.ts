@@ -46,6 +46,9 @@ export const formatDateShort = (value: string) =>
 export const formatTime = (value: string) =>
   formatInTimeZone(value, env.businessTimeZone, 'HH:mm')
 
+export const formatBusinessDateIso = (value: string) =>
+  formatInTimeZone(value, env.businessTimeZone, 'yyyy-MM-dd')
+
 export const formatDateTime = (value: string) =>
   formatInTimeZone(value, env.businessTimeZone, "dd MMM yyyy, HH:mm", {
     locale: es,
@@ -114,6 +117,22 @@ export const fromDatetimeLocalValue = (value: string) => {
   }
 
   return fromZonedTime(value, env.businessTimeZone).toISOString()
+}
+
+export const toTimeInputValue = (isoDateTime: string | null | undefined) => {
+  if (!isoDateTime) {
+    return ''
+  }
+
+  return formatInTimeZone(isoDateTime, env.businessTimeZone, 'HH:mm')
+}
+
+export const fromBusinessDateAndTime = (date: string, time: string) => {
+  if (!date || !time) {
+    return null
+  }
+
+  return fromZonedTime(`${date}T${time}`, env.businessTimeZone).toISOString()
 }
 
 export const formatInputDate = (value: Date) => format(value, 'yyyy-MM-dd')

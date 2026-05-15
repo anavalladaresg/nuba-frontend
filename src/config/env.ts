@@ -4,6 +4,7 @@ const supabaseUrl = normalizeOptionalString(import.meta.env.VITE_SUPABASE_URL)
 const supabasePublishableKey = normalizeOptionalString(
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY,
 )
+const webPushPublicKey = normalizeOptionalString(import.meta.env.VITE_WEB_PUSH_PUBLIC_KEY)
 const hasSupabaseConfig = Boolean(supabaseUrl && supabasePublishableKey)
 
 export const env = {
@@ -13,6 +14,7 @@ export const env = {
   clerkPublishableKey: normalizeOptionalString(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY),
   supabaseUrl,
   supabasePublishableKey,
+  webPushPublicKey,
   useSupabaseDirect:
     hasSupabaseConfig &&
     normalizeOptionalString(import.meta.env.VITE_USE_SUPABASE_DIRECT) !== 'false',

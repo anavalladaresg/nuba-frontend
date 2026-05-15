@@ -16,6 +16,7 @@ import type {
   ManualEdit,
   TodayWorkSessionsResponse,
   WorkBreak,
+  WorkSessionAutoCloseNotice,
   WorkSession,
   WorkSessionDetailResponse,
   WorkSessionHistoryResponse,
@@ -37,6 +38,10 @@ import type {
   DashboardStatisticsResponse,
   DashboardWorkPattern,
 } from '../types/statistics'
+import type {
+  PushSubscriptionPayload,
+  PushSubscriptionsResponse,
+} from '../types/notifications'
 import { buildWorkSessionsCsv, buildWorkSessionsPdf } from '../utils/export-report'
 
 type PrototypeRequestOptions = {
@@ -65,12 +70,27 @@ type StoredSession = {
   manualEdits: ManualEdit[]
 }
 
+type StoredPushSubscription = {
+  id: string
+  endpoint: string
+  p256dh: string
+  auth: string
+  userAgent: string | null
+  platform: string | null
+  createdAt: string
+  updatedAt: string
+  lastSeenAt: string
+  lastSuccessAt: string | null
+  failureCount: number
+}
+
 type PrototypeDb = {
   version: 2
   user: CurrentUser
   settings: MeSettings
   dailyGoals: DailyGoal[]
   notifications: NotificationsSettings
+  pushSubscriptions: StoredPushSubscription[]
   sessions: StoredSession[]
   outingsByDate: Record<string, number>
 }
@@ -78,6 +98,10 @@ type PrototypeDb = {
 const STORAGE_KEY = 'nuba.prototype.db.v1'
 const PROTOTYPE_TOKEN = 'nuba-prototype-token'
 const NETWORK_DELAY_MS = 120
+const AUTO_COMPLETE_LOG_FIELD = 'AUTO_COMPLETE'
+const OUTING_LOG_FIELD = 'OUTING'
+const SESSION_EDIT_LOG_FIELD = 'SESSION_EDIT'
+const FALLBACK_AUTO_COMPLETE_TARGET_MINUTES = 480
 
 const dayOfWeekByIndex: DayOfWeek[] = [
   'SUNDAY',
@@ -91,9 +115,10 @@ const dayOfWeekByIndex: DayOfWeek[] = [
 
 let memoryDb: PrototypeDb | null = null
 
-type PersistedPrototypeDb = Omit<PrototypeDb, 'version' | 'outingsByDate'> & {
+type PersistedPrototypeDb = Omit<PrototypeDb, 'version' | 'outingsByDate' | 'pushSubscriptions'> & {
   version?: number
   outingsByDate?: unknown
+  pushSubscriptions?: unknown
 }
 
 const cloneValue = <T,>(value: T): T => {
@@ -110,7 +135,18 @@ const getStorage = () => {
   }
 
   try {
-    return window.localStorage
+    const storage = window.localStorage
+
+    if (
+      !storage ||
+      typeof storage.getItem !== 'function' ||
+      typeof storage.setItem !== 'function' ||
+      typeof storage.removeItem !== 'function'
+    ) {
+      return null
+    }
+
+    return storage
   } catch {
     return null
   }
@@ -132,10 +168,65 @@ const normalizeOutingsByDate = (value: unknown): Record<string, number> => {
   )
 }
 
+const normalizePushSubscriptions = (value: unknown): StoredPushSubscription[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') {
+      return []
+    }
+
+    const candidate = item as Partial<StoredPushSubscription>
+
+    if (
+      typeof candidate.id !== 'string' ||
+      typeof candidate.endpoint !== 'string' ||
+      typeof candidate.p256dh !== 'string' ||
+      typeof candidate.auth !== 'string' ||
+      typeof candidate.createdAt !== 'string' ||
+      typeof candidate.updatedAt !== 'string' ||
+      typeof candidate.lastSeenAt !== 'string'
+    ) {
+      return []
+    }
+
+    return [
+      {
+        id: candidate.id,
+        endpoint: candidate.endpoint,
+        p256dh: candidate.p256dh,
+        auth: candidate.auth,
+        userAgent: typeof candidate.userAgent === 'string' ? candidate.userAgent : null,
+        platform: typeof candidate.platform === 'string' ? candidate.platform : null,
+        createdAt: candidate.createdAt,
+        updatedAt: candidate.updatedAt,
+        lastSeenAt: candidate.lastSeenAt,
+        lastSuccessAt: typeof candidate.lastSuccessAt === 'string' ? candidate.lastSuccessAt : null,
+        failureCount:
+          typeof candidate.failureCount === 'number' && Number.isFinite(candidate.failureCount)
+            ? Math.max(0, Math.trunc(candidate.failureCount))
+            : 0,
+      },
+    ]
+  })
+}
+
 const normalizePrototypeDb = (value: PersistedPrototypeDb): PrototypeDb => ({
   ...value,
   version: 2,
+  settings: {
+    sameHoursEachDay: value.settings?.sameHoursEachDay ?? true,
+    timeZone: value.settings?.timeZone ?? env.businessTimeZone,
+    autoCompleteForgottenCheckout:
+      value.settings?.autoCompleteForgottenCheckout ?? false,
+    autoCompleteGraceMinutes: normalizeAutoCompleteGraceMinutes(
+      value.settings?.autoCompleteGraceMinutes,
+    ),
+  },
   outingsByDate: normalizeOutingsByDate(value.outingsByDate),
+  pushSubscriptions: normalizePushSubscriptions(value.pushSubscriptions),
 })
 
 const createSessionId = () => {
@@ -225,11 +316,124 @@ const isWeekendDate = (date: string) => {
 const minutesBetween = (startIso: string, endIso: string) =>
   Math.max(0, differenceInMinutes(new Date(endIso), new Date(startIso)))
 
+const formatMinutesLabel = (minutes: number) => {
+  const safeMinutes = Math.max(0, Math.trunc(minutes))
+  const hours = Math.floor(safeMinutes / 60)
+  const remainder = safeMinutes % 60
+
+  if (hours === 0) {
+    return `${safeMinutes}m`
+  }
+
+  if (remainder === 0) {
+    return `${hours}h`
+  }
+
+  return `${hours}h ${remainder.toString().padStart(2, '0')}m`
+}
+
+const buildAutoCompleteReason = (graceMinutes: number) =>
+  `Cierre automático tras ${formatMinutesLabel(graceMinutes)} de margen por olvido de desfichaje.`
+
+const normalizeAutoCompleteGraceMinutes = (value: number | null | undefined) =>
+  typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(720, Math.max(0, Math.trunc(value)))
+    : 30
+
+const parseAutoCompletePayload = (value: string | null | undefined) => {
+  if (!value) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(value) as {
+      endTime?: string
+      graceMinutes?: number
+    }
+
+    if (
+      typeof parsed.endTime !== 'string' ||
+      typeof parsed.graceMinutes !== 'number' ||
+      !Number.isFinite(parsed.graceMinutes)
+    ) {
+      return null
+    }
+
+    return {
+      endTime: parsed.endTime,
+      graceMinutes: normalizeAutoCompleteGraceMinutes(parsed.graceMinutes),
+    }
+  } catch {
+    return null
+  }
+}
+
+const buildAutoCloseNotice = ({
+  endTime,
+  graceMinutes,
+  sessionId,
+  workDate,
+}: {
+  endTime: string
+  graceMinutes: number
+  sessionId: string
+  workDate: string
+}): WorkSessionAutoCloseNotice => ({
+  sessionId,
+  workDate,
+  endTime,
+  graceMinutes,
+  message: `Se completó el fichaje automáticamente a las ${formatInTimeZone(
+    endTime,
+    env.businessTimeZone,
+    'HH:mm',
+  )} tras ${formatMinutesLabel(graceMinutes)} de margen porque te olvidaste de hacerlo tú.`,
+})
+
 const getBreakMinutes = (workBreak: StoredBreak, nowIso: string) =>
   minutesBetween(workBreak.startTime, workBreak.endTime ?? nowIso)
 
 const hasOpenBreak = (session: StoredSession) =>
   session.breaks.some((workBreak) => workBreak.endTime === null)
+
+const getLatestSessionEdit = (manualEdits: ManualEdit[]) =>
+  [...manualEdits]
+    .filter((edit) => edit.fieldChanged !== OUTING_LOG_FIELD)
+    .sort(
+      (left, right) =>
+        new Date(right.editedAt ?? '').getTime() - new Date(left.editedAt ?? '').getTime(),
+    )
+    .at(0) ?? null
+
+const getAutoCloseNoticeFromManualEdits = (
+  session: StoredSession,
+): WorkSessionAutoCloseNotice | null => {
+  const autoCloseEdit = [...session.manualEdits]
+    .filter((edit) => edit.fieldChanged === AUTO_COMPLETE_LOG_FIELD)
+    .sort(
+      (left, right) =>
+        new Date(right.editedAt ?? '').getTime() - new Date(left.editedAt ?? '').getTime(),
+    )
+    .at(0)
+
+  if (!autoCloseEdit) {
+    return null
+  }
+
+  const payload = parseAutoCompletePayload(autoCloseEdit.newValue)
+  const endTime = payload?.endTime ?? session.endTime
+
+  if (!endTime) {
+    return null
+  }
+
+  return buildAutoCloseNotice({
+    sessionId: session.id,
+    workDate: getBusinessDateFromInstant(session.startTime),
+    endTime,
+    graceMinutes: payload?.graceMinutes ?? normalizeAutoCompleteGraceMinutes(null),
+  })
+}
 
 const normalizeSessionStatus = (session: StoredSession): WorkSessionStatus => {
   if (session.endTime && session.status === 'EDITED') {
@@ -254,6 +458,7 @@ const toWorkSession = (session: StoredSession, nowIso: string): WorkSession => {
     0,
   )
   const workedMinutes = Math.max(0, minutesBetween(session.startTime, endTime) - breakMinutes)
+  const latestSessionEdit = getLatestSessionEdit(session.manualEdits)
 
   return {
     id: session.id,
@@ -261,7 +466,10 @@ const toWorkSession = (session: StoredSession, nowIso: string): WorkSession => {
     startTime: session.startTime,
     endTime: session.endTime,
     notes: session.notes,
-    reason: session.reason,
+    reason: latestSessionEdit?.reason ?? session.reason,
+    editType: latestSessionEdit?.fieldChanged ?? null,
+    editedAt: latestSessionEdit?.editedAt ?? null,
+    autoCloseNotice: getAutoCloseNoticeFromManualEdits(session),
     workedMinutes,
     breakMinutes,
   }
@@ -416,14 +624,19 @@ const buildTodayResponse = (db: PrototypeDb, nowIso: string): TodayWorkSessionsR
   const today = getBusinessDateFromInstant(nowIso)
   const sessions = getSessionsForDate(db, today)
   const openSession = getOpenSession(db)
+  const todayOpenSession =
+    openSession && getBusinessDateFromInstant(openSession.startTime) === today
+      ? openSession
+      : null
   const summary = buildDaySummary(db, today, nowIso)
 
   return {
     summary,
-    paused: Boolean(openSession && hasOpenBreak(openSession)),
-    activeBreak: getActiveBreak(openSession, nowIso),
+    paused: Boolean(todayOpenSession && hasOpenBreak(todayOpenSession)),
+    activeBreak: getActiveBreak(todayOpenSession ?? undefined, nowIso),
     sessions: sessions.map((session) => toWorkSession(session, nowIso)),
     timeline: sortEventsAsc(sessions.flatMap((session) => session.timeline)),
+    carryOverSession: null,
   }
 }
 
@@ -681,6 +894,9 @@ const createSeedSessions = (now: Date) => {
           {
             id: createManualEditId(),
             editedAt: toBusinessIso(date, '18:15'),
+            fieldChanged: SESSION_EDIT_LOG_FIELD,
+            oldValue: null,
+            newValue: 'Se alineo la hora final con el registro validado.',
             reason: 'Correccion manual del cierre.',
             notes: 'Se alineo la hora final con el registro validado.',
           },
@@ -730,6 +946,8 @@ const createSeedDb = (): PrototypeDb => {
     settings: {
       sameHoursEachDay: true,
       timeZone: env.businessTimeZone,
+      autoCompleteForgottenCheckout: false,
+      autoCompleteGraceMinutes: 30,
     },
     dailyGoals: createDefaultGoals(),
     notifications: {
@@ -738,6 +956,7 @@ const createSeedDb = (): PrototypeDb => {
       remindPause: false,
       remindStop: true,
     },
+    pushSubscriptions: [],
     sessions: createSeedSessions(now),
     outingsByDate: {},
   }
@@ -822,21 +1041,105 @@ const validateRange = (path: string, from?: string, to?: string) => {
 const validateEditableSessionPayload = (
   payload: WorkSessionUpdatePayload,
   path: string,
+  options: {
+    allowOpenSession: boolean
+  },
 ) => {
   const fieldErrors: FieldError[] = []
+  const sessionStartMs = new Date(payload.startTime).getTime()
+  const sessionEndMs = payload.endTime ? new Date(payload.endTime).getTime() : null
 
-  if (new Date(payload.endTime) <= new Date(payload.startTime)) {
+  if (sessionEndMs !== null && sessionEndMs <= sessionStartMs) {
     fieldErrors.push({
       field: 'endTime',
       message: 'La hora de fin debe ser posterior al inicio.',
     })
   }
 
-  payload.breaks.forEach((workBreak, index) => {
-    if (!workBreak.endTime || new Date(workBreak.endTime) <= new Date(workBreak.startTime)) {
+  if (sessionEndMs === null && !options.allowOpenSession) {
+    fieldErrors.push({
+      field: 'endTime',
+      message: 'Las jornadas cerradas deben mantener una hora de salida.',
+    })
+  }
+
+  const breaksWithIndex = payload.breaks.map((workBreak, index) => ({
+    index,
+    ...workBreak,
+  }))
+  const sortedBreaks = [...breaksWithIndex].sort(
+    (left, right) =>
+      new Date(left.startTime).getTime() - new Date(right.startTime).getTime(),
+  )
+
+  sortedBreaks.forEach((workBreak, sortedIndex) => {
+    const breakStartMs = new Date(workBreak.startTime).getTime()
+    const breakEndMs = workBreak.endTime ? new Date(workBreak.endTime).getTime() : Number.NaN
+
+    if (!workBreak.endTime && sessionEndMs !== null) {
       fieldErrors.push({
-        field: `breaks.${index}.endTime`,
+        field: `breaks.${workBreak.index}.endTime`,
+        message: 'Si la jornada está cerrada, todos los descansos deben quedar cerrados.',
+      })
+
+      return
+    }
+
+    if (!workBreak.endTime && !options.allowOpenSession) {
+      fieldErrors.push({
+        field: `breaks.${workBreak.index}.endTime`,
+        message: 'Solo las jornadas abiertas pueden mantener un descanso en curso.',
+      })
+
+      return
+    }
+
+    if (workBreak.endTime && breakEndMs <= breakStartMs) {
+      fieldErrors.push({
+        field: `breaks.${workBreak.index}.endTime`,
         message: 'Cada pausa debe tener un fin posterior al inicio.',
+      })
+
+      return
+    }
+
+    if (breakStartMs < sessionStartMs) {
+      fieldErrors.push({
+        field: `breaks.${workBreak.index}.startTime`,
+        message: 'Las pausas deben quedar dentro de la jornada.',
+      })
+    }
+
+    if (workBreak.endTime && sessionEndMs !== null && breakEndMs > sessionEndMs) {
+      fieldErrors.push({
+        field: `breaks.${workBreak.index}.startTime`,
+        message: 'Las pausas deben quedar dentro de la jornada.',
+      })
+    }
+
+    const previousBreak = sortedBreaks[sortedIndex - 1]
+    if (previousBreak && !previousBreak.endTime) {
+      fieldErrors.push({
+        field: `breaks.${workBreak.index}.startTime`,
+        message: 'Solo el último descanso puede seguir abierto.',
+      })
+    }
+
+    if (previousBreak?.endTime) {
+      const previousBreakEndMs = new Date(previousBreak.endTime).getTime()
+
+      if (breakStartMs < previousBreakEndMs) {
+        fieldErrors.push({
+          field: `breaks.${workBreak.index}.startTime`,
+          message: 'Las pausas no pueden solaparse entre sí.',
+        })
+      }
+    }
+
+    if (!workBreak.endTime && sortedIndex !== sortedBreaks.length - 1) {
+      fieldErrors.push({
+        field: `breaks.${workBreak.index}.endTime`,
+        message: 'Solo el último descanso puede seguir abierto.',
       })
     }
   })
@@ -844,6 +1147,16 @@ const validateEditableSessionPayload = (
   if (fieldErrors.length) {
     throw createApiError(path, 400, 'Hay errores de validación en la jornada.', fieldErrors)
   }
+}
+
+const getUpdatedSessionStatus = (payload: WorkSessionUpdatePayload): WorkSessionStatus => {
+  if (payload.endTime) {
+    return 'EDITED'
+  }
+
+  return payload.breaks.some((workBreak) => workBreak.endTime === null)
+    ? 'PAUSED'
+    : 'ACTIVE'
 }
 
 const buildHistoryResponse = (
@@ -903,6 +1216,85 @@ const buildDetailResponse = (
   }
 }
 
+const resolveAutoCompleteTargetMinutes = (db: PrototypeDb, session: StoredSession) => {
+  const workDate = getBusinessDateFromInstant(session.startTime)
+  const targetMinutes = getTargetMinutesForDate(db, workDate)
+
+  if (targetMinutes > 0) {
+    return targetMinutes
+  }
+
+  return getUniformWeekdayTargetMinutes(db) || FALLBACK_AUTO_COMPLETE_TARGET_MINUTES
+}
+
+const maybeAutoCompleteCarryOverSession = (
+  db: PrototypeDb,
+  nowIso: string,
+): WorkSessionAutoCloseNotice | null => {
+  if (!db.settings.autoCompleteForgottenCheckout) {
+    return null
+  }
+
+  const session = getOpenSession(db)
+
+  if (!session) {
+    return null
+  }
+
+  const workDate = getBusinessDateFromInstant(session.startTime)
+  const today = getBusinessDateFromInstant(nowIso)
+
+  if (workDate >= today || hasOpenBreak(session)) {
+    return null
+  }
+
+  const graceMinutes = normalizeAutoCompleteGraceMinutes(
+    db.settings.autoCompleteGraceMinutes,
+  )
+  const closedBreakMinutes = session.breaks.reduce((total, workBreak) => {
+    if (!workBreak.endTime) {
+      return total
+    }
+
+    return total + minutesBetween(workBreak.startTime, workBreak.endTime)
+  }, 0)
+  const endTime = addMinutes(
+    new Date(session.startTime),
+    resolveAutoCompleteTargetMinutes(db, session) + closedBreakMinutes + graceMinutes,
+  ).toISOString()
+
+  if (new Date(endTime) > new Date(nowIso)) {
+    return null
+  }
+
+  session.endTime = endTime
+  session.status = 'EDITED'
+  session.reason = buildAutoCompleteReason(graceMinutes)
+  session.manualEdits.push({
+    id: createManualEditId(),
+    editedAt: nowIso,
+    fieldChanged: AUTO_COMPLETE_LOG_FIELD,
+    oldValue: null,
+    newValue: JSON.stringify({ endTime, graceMinutes }),
+    reason: buildAutoCompleteReason(graceMinutes),
+    notes: null,
+  })
+  session.timeline = createTimeline(
+    session.id,
+    session.startTime,
+    session.endTime,
+    session.breaks,
+    'EDITED',
+  )
+
+  return buildAutoCloseNotice({
+    sessionId: session.id,
+    workDate,
+    endTime,
+    graceMinutes,
+  })
+}
+
 const listSessionsForExport = (db: PrototypeDb, nowIso: string, query?: QueryParams) => {
   const history = buildHistoryResponse(db, nowIso, {
     ...query,
@@ -932,12 +1324,41 @@ export async function prototypeBackendRequest<TSchema>(
   const nowIso = new Date().toISOString()
 
   if (path === '/api/work-sessions/today' && method === 'GET') {
-    return buildTodayResponse(loadDb(), nowIso) as TSchema
+    return updateDb((db) => {
+      maybeAutoCompleteCarryOverSession(db, nowIso)
+
+      const response = buildTodayResponse(db, nowIso)
+      const openSession = getOpenSession(db)
+      const today = getBusinessDateFromInstant(nowIso)
+
+      return {
+        ...response,
+        carryOverSession:
+          openSession && getBusinessDateFromInstant(openSession.startTime) !== today
+            ? toWorkSession(openSession, nowIso)
+            : null,
+      }
+    }) as TSchema
   }
 
   if (path === '/api/work-sessions/start' && method === 'POST') {
-    updateDb((db) => {
-      if (getOpenSession(db)) {
+    return updateDb((db) => {
+      const autoClosedPreviousSession = maybeAutoCompleteCarryOverSession(db, nowIso)
+      const openSession = getOpenSession(db)
+
+      if (openSession) {
+        if (getBusinessDateFromInstant(openSession.startTime) !== getBusinessDateFromInstant(nowIso)) {
+          throw createApiError(
+            path,
+            409,
+            `Tienes una jornada pendiente del ${formatInTimeZone(
+              openSession.startTime,
+              env.businessTimeZone,
+              'dd/MM',
+            )}. Ajusta la salida desde Calendario antes de fichar hoy.`,
+          )
+        }
+
         throw createApiError(path, 409, 'Ya existe una jornada abierta.')
       }
 
@@ -952,9 +1373,11 @@ export async function prototypeBackendRequest<TSchema>(
       session.startTime = nowIso
       session.timeline = createTimeline(session.id, session.startTime, null, [], 'ACTIVE')
       db.sessions.push(session)
-    })
-
-    return undefined as TSchema
+      
+      return {
+        autoClosedPreviousSession,
+      }
+    }) as TSchema
   }
 
   if (path === '/api/work-sessions/pause' && method === 'POST') {
@@ -1137,6 +1560,68 @@ export async function prototypeBackendRequest<TSchema>(
     return undefined as TSchema
   }
 
+  if (path === '/api/notifications/push-subscriptions' && method === 'GET') {
+    const db = loadDb()
+
+    return {
+      items: [...db.pushSubscriptions].sort(
+        (left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
+      ),
+    } satisfies PushSubscriptionsResponse as TSchema
+  }
+
+  if (path === '/api/notifications/push-subscriptions' && method === 'PUT') {
+    const payload = body as PushSubscriptionPayload
+
+    updateDb((db) => {
+      const existingIndex = db.pushSubscriptions.findIndex(
+        (subscription) => subscription.endpoint === payload.endpoint,
+      )
+
+      const nextValue: StoredPushSubscription = {
+        id:
+          existingIndex >= 0
+            ? db.pushSubscriptions[existingIndex]!.id
+            : `push-subscription-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        endpoint: payload.endpoint,
+        p256dh: payload.p256dh,
+        auth: payload.auth,
+        userAgent: payload.userAgent,
+        platform: payload.platform,
+        createdAt:
+          existingIndex >= 0
+            ? db.pushSubscriptions[existingIndex]!.createdAt
+            : nowIso,
+        updatedAt: nowIso,
+        lastSeenAt: nowIso,
+        lastSuccessAt:
+          existingIndex >= 0 ? db.pushSubscriptions[existingIndex]!.lastSuccessAt : null,
+        failureCount:
+          existingIndex >= 0 ? db.pushSubscriptions[existingIndex]!.failureCount : 0,
+      }
+
+      if (existingIndex >= 0) {
+        db.pushSubscriptions[existingIndex] = nextValue
+      } else {
+        db.pushSubscriptions.push(nextValue)
+      }
+    })
+
+    return undefined as TSchema
+  }
+
+  if (path === '/api/notifications/push-subscriptions/unsubscribe' && method === 'POST') {
+    const payload = body as { endpoint?: string }
+
+    updateDb((db) => {
+      db.pushSubscriptions = db.pushSubscriptions.filter(
+        (subscription) => subscription.endpoint !== payload.endpoint,
+      )
+    })
+
+    return undefined as TSchema
+  }
+
   if (path === '/api/exports/csv' && method === 'GET') {
     const db = loadDb()
     const from = typeof query?.from === 'string' ? query.from : undefined
@@ -1171,24 +1656,18 @@ export async function prototypeBackendRequest<TSchema>(
   if (detailMatch && method === 'PUT') {
     const sessionId = detailMatch[1]
     const payload = body as WorkSessionUpdatePayload
-    validateEditableSessionPayload(payload, path)
 
     updateDb((db) => {
       const session = requireSession(db, sessionId, path)
-
-      if (!session.endTime) {
-        throw createApiError(
-          path,
-          409,
-          'Solo puedes editar jornadas cerradas en este prototipo.',
-        )
-      }
+      validateEditableSessionPayload(payload, path, {
+        allowOpenSession: !session.endTime,
+      })
 
       session.startTime = payload.startTime
-      session.endTime = payload.endTime
+      session.endTime = payload.endTime ?? null
       session.notes = payload.notes ?? null
       session.reason = payload.reason
-      session.status = 'EDITED'
+      session.status = getUpdatedSessionStatus(payload)
       session.breaks = payload.breaks.map((workBreak) => ({
         id: workBreak.id ?? createBreakId(),
         breakType: workBreak.breakType,
@@ -1198,6 +1677,9 @@ export async function prototypeBackendRequest<TSchema>(
       session.manualEdits.push({
         id: createManualEditId(),
         editedAt: nowIso,
+        fieldChanged: SESSION_EDIT_LOG_FIELD,
+        oldValue: null,
+        newValue: payload.notes ?? null,
         reason: payload.reason,
         notes: payload.notes ?? null,
       })
@@ -1206,7 +1688,7 @@ export async function prototypeBackendRequest<TSchema>(
         session.startTime,
         session.endTime,
         session.breaks,
-        'EDITED',
+        session.status,
       )
     })
 
@@ -1217,3 +1699,18 @@ export async function prototypeBackendRequest<TSchema>(
 }
 
 export const getPrototypeAccessToken = async () => PROTOTYPE_TOKEN
+
+export const resetPrototypeDbForTests = () => {
+  memoryDb = null
+  const storage = getStorage()
+
+  if (storage && typeof storage.removeItem === 'function') {
+    storage.removeItem(STORAGE_KEY)
+  }
+}
+
+export const setPrototypeDbForTests = (db: PrototypeDb) => {
+  memoryDb = cloneValue(db)
+}
+
+export const getPrototypeDbSnapshotForTests = () => cloneValue(loadDb())

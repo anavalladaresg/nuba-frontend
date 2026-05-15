@@ -474,6 +474,8 @@ export function SettingsScreen() {
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('same')
   const [dailyTargetMinutes, setDailyTargetMinutes] = useState(480)
   const [goalMinutesByDay, setGoalMinutesByDay] = useState<Record<DayOfWeek, number>>(defaultGoalMinutesByDay)
+  const [autoCompleteForgottenCheckout, setAutoCompleteForgottenCheckout] = useState(false)
+  const [autoCompleteGraceMinutes, setAutoCompleteGraceMinutes] = useState(30)
   const [targetReminderEnabled, setTargetReminderEnabled] = useState(() =>
     getStoredBoolean(TARGET_REMINDER_STORAGE_KEY, true),
   )
@@ -511,8 +513,18 @@ export function SettingsScreen() {
   })
 
   useEffect(() => {
-    if (preferencesQuery.data) {
+    if (!preferencesQuery.data) return
+
+    const frameId = window.requestAnimationFrame(() => {
       setScheduleMode(preferencesQuery.data.sameHoursEachDay ? 'same' : 'custom')
+      setAutoCompleteForgottenCheckout(
+        preferencesQuery.data.autoCompleteForgottenCheckout,
+      )
+      setAutoCompleteGraceMinutes(preferencesQuery.data.autoCompleteGraceMinutes)
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
     }
   }, [preferencesQuery.data])
 
@@ -524,8 +536,14 @@ export function SettingsScreen() {
       nextGoals[goal.dayOfWeek] = goal.targetMinutes
     })
 
-    setGoalMinutesByDay(nextGoals)
-    setDailyTargetMinutes(nextGoals.MONDAY || 480)
+    const frameId = window.requestAnimationFrame(() => {
+      setGoalMinutesByDay(nextGoals)
+      setDailyTargetMinutes(nextGoals.MONDAY || 480)
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+    }
   }, [goalsQuery.data])
 
   useEffect(() => {
@@ -563,6 +581,8 @@ export function SettingsScreen() {
       await settingsApi.updateSettings({
         sameHoursEachDay: scheduleMode === 'same',
         timeZone: FIXED_TIME_ZONE,
+        autoCompleteForgottenCheckout,
+        autoCompleteGraceMinutes,
       })
       await settingsApi.updateDailyGoals({ goals })
     },
@@ -806,6 +826,49 @@ export function SettingsScreen() {
               </div>
             )}
 
+            <div className="rounded-[24px] border border-white/[0.07] bg-[linear-gradient(180deg,_rgb(26_35_48_/_0.3),_rgb(18_24_33_/_0.5))] p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1.5">
+                  <p className="text-sm font-medium text-nuba-text">
+                    Cierre automático de olvidos
+                  </p>
+                  <p className="text-xs leading-5 text-nuba-text-muted/72">
+                    Si una jornada de un día anterior sigue abierta y ya ha superado su objetivo
+                    más un margen, Nuba la cerrará sola para no bloquear el siguiente fichaje.
+                  </p>
+                </div>
+                <SettingsToggle
+                  label="Activar cierre automático de fichajes olvidados"
+                  checked={autoCompleteForgottenCheckout}
+                  onChange={setAutoCompleteForgottenCheckout}
+                />
+              </div>
+
+              <div className="mt-4 rounded-[20px] border border-white/[0.06] bg-black/10 px-3.5 py-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-nuba-text">Margen antes de cerrar</p>
+                    <p className="mt-1 text-xs text-nuba-text-muted/70">
+                      Ese tiempo aparecerá en el aviso automático y luego podrás corregirlo desde
+                      Calendario si la salida real fue otra.
+                    </p>
+                  </div>
+                  <MinutesInput
+                    ariaLabel="Margen de autocierre en minutos"
+                    value={autoCompleteGraceMinutes}
+                    onChange={setAutoCompleteGraceMinutes}
+                  />
+                </div>
+              </div>
+
+              {autoCompleteForgottenCheckout ? (
+                <div className="mt-4 rounded-2xl border border-nuba-break/18 bg-[linear-gradient(180deg,_rgb(255_209_102_/_0.12),_rgb(255_209_102_/_0.06))] px-3 py-2.5 text-sm text-nuba-text">
+                  Si olvidas desfichar, verás un mensaje indicando que se completó
+                  automáticamente tras {formatGoalMinutes(autoCompleteGraceMinutes)} de margen.
+                </div>
+              ) : null}
+            </div>
+
             <PrimaryButton
               type="button"
               loading={scheduleMutation.isPending}
@@ -928,7 +991,7 @@ export function SettingsScreen() {
 
         {scheduleMutation.isSuccess ? (
           <InlineAlert tone="success" title="Jornada guardada">
-            Tus objetivos se han actualizado.
+            Tus objetivos y el comportamiento de autocierre ya están actualizados.
           </InlineAlert>
         ) : null}
 

@@ -12,6 +12,8 @@ export const currentUserSchema = z.object({
 export const meSettingsSchema = z.object({
   sameHoursEachDay: z.boolean(),
   timeZone: z.string(),
+  autoCompleteForgottenCheckout: z.boolean().default(false),
+  autoCompleteGraceMinutes: z.number().int().min(0).default(30),
 })
 
 export const dailyGoalSchema = z.object({

@@ -32,6 +32,9 @@ const createTodayData = (
       endTime: null,
       notes: null,
       reason: null,
+      editType: null,
+      editedAt: null,
+      autoCloseNotice: null,
       workedMinutes: 2,
       breakMinutes: 0,
     },
@@ -45,6 +48,7 @@ const createTodayData = (
       status: 'ACTIVE',
     },
   ],
+  carryOverSession: null,
   ...overrides,
 })
 
@@ -81,6 +85,9 @@ describe('calculateLiveTodayMetrics', () => {
           endTime: null,
           notes: null,
           reason: null,
+          editType: null,
+          editedAt: null,
+          autoCloseNotice: null,
           workedMinutes: 2,
           breakMinutes: 2,
         },

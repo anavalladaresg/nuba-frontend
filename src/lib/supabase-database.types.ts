@@ -192,6 +192,119 @@ export type Database = {
           },
         ]
       }
+      push_subscriptions: {
+        Row: {
+          id: string
+          user_id: string
+          endpoint: string
+          p256dh_key: string
+          auth_key: string
+          platform: string | null
+          user_agent: string | null
+          created_at: string
+          updated_at: string
+          last_seen_at: string
+          last_success_at: string | null
+          last_failure_at: string | null
+          failure_count: number
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          endpoint: string
+          p256dh_key: string
+          auth_key: string
+          platform?: string | null
+          user_agent?: string | null
+          created_at?: string
+          updated_at?: string
+          last_seen_at?: string
+          last_success_at?: string | null
+          last_failure_at?: string | null
+          failure_count?: number
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          endpoint?: string
+          p256dh_key?: string
+          auth_key?: string
+          platform?: string | null
+          user_agent?: string | null
+          created_at?: string
+          updated_at?: string
+          last_seen_at?: string
+          last_success_at?: string | null
+          last_failure_at?: string | null
+          failure_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'push_subscriptions_user_id_fkey'
+            columns: ['user_id']
+            referencedRelation: 'app_users'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      notification_delivery_logs: {
+        Row: {
+          id: string
+          user_id: string
+          work_session_id: string | null
+          push_subscription_id: string | null
+          reminder_type: string
+          dedupe_key: string
+          delivered: boolean
+          payload: unknown
+          sent_at: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          work_session_id?: string | null
+          push_subscription_id?: string | null
+          reminder_type: string
+          dedupe_key: string
+          delivered?: boolean
+          payload?: unknown
+          sent_at?: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          work_session_id?: string | null
+          push_subscription_id?: string | null
+          reminder_type?: string
+          dedupe_key?: string
+          delivered?: boolean
+          payload?: unknown
+          sent_at?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'notification_delivery_logs_push_subscription_id_fkey'
+            columns: ['push_subscription_id']
+            referencedRelation: 'push_subscriptions'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'notification_delivery_logs_user_id_fkey'
+            columns: ['user_id']
+            referencedRelation: 'app_users'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'notification_delivery_logs_work_session_id_fkey'
+            columns: ['work_session_id']
+            referencedRelation: 'work_sessions'
+            referencedColumns: ['id']
+          },
+        ]
+      }
       user_daily_goals: {
         Row: {
           id: string
@@ -234,6 +347,8 @@ export type Database = {
           default_daily_minutes: number | null
           lunch_counts_as_work_time: boolean
           dark_mode_enabled: boolean
+          auto_complete_forgotten_checkout: boolean
+          auto_complete_grace_minutes: number
           created_at: string
           updated_at: string
         }
@@ -244,6 +359,8 @@ export type Database = {
           default_daily_minutes?: number | null
           lunch_counts_as_work_time?: boolean
           dark_mode_enabled?: boolean
+          auto_complete_forgotten_checkout?: boolean
+          auto_complete_grace_minutes?: number
           created_at?: string
           updated_at?: string
         }
@@ -254,6 +371,8 @@ export type Database = {
           default_daily_minutes?: number | null
           lunch_counts_as_work_time?: boolean
           dark_mode_enabled?: boolean
+          auto_complete_forgotten_checkout?: boolean
+          auto_complete_grace_minutes?: number
           created_at?: string
           updated_at?: string
         }

@@ -133,7 +133,7 @@ function generateHabitsSection(pattern: DashboardWorkPattern): Array<{
 
 function generateTrendBar(
   weekDays: DashboardStatisticsResponse['currentWeekDays'],
-  recentDays: DashboardStatisticsResponse['recentDays'],
+  _recentDays: DashboardStatisticsResponse['recentDays'],
 ) {
   if (weekDays.length === 0) return undefined
 

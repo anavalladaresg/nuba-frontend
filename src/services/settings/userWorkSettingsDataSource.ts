@@ -5,6 +5,8 @@ export type UserWorkSettingsPreview = {
   defaultDailyMinutes: number | null
   lunchCountsAsWorkTime: boolean
   darkModeEnabled: boolean
+  autoCompleteForgottenCheckout: boolean
+  autoCompleteGraceMinutes: number
 }
 
 export type UserWorkSettingsDataSource = {

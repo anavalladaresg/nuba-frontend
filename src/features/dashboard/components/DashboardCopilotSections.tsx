@@ -17,14 +17,6 @@ const toneTextClassNames: Record<Tone, string> = {
   neutral: 'text-nuba-text-muted',
 }
 
-const toneChipClassNames: Record<Tone, string> = {
-  brand: 'border-nuba-brand/18 bg-nuba-brand/10 text-nuba-brand',
-  success: 'border-nuba-check-in/18 bg-nuba-check-in/10 text-nuba-check-in',
-  warning: 'border-nuba-break/18 bg-nuba-break/10 text-nuba-break',
-  violet: 'border-[#B388FF]/18 bg-[#B388FF]/10 text-[#C7ABFF]',
-  neutral: 'border-white/8 bg-white/[0.04] text-nuba-text-muted/86',
-}
-
 const toneGlowClassNames: Record<Tone, string> = {
   brand:
     'before:bg-[radial-gradient(circle_at_top_right,_rgb(124_158_255_/_0.22),_transparent_56%)]',
@@ -66,25 +58,6 @@ function InsightSurface({
     >
       <div className="relative z-10">{children}</div>
     </section>
-  )
-}
-
-function ToneChip({
-  children,
-  tone,
-}: {
-  children: ReactNode
-  tone: Tone
-}) {
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded-full border px-3 py-1 text-[0.72rem] font-semibold tracking-[0.06em]',
-        toneChipClassNames[tone],
-      )}
-    >
-      {children}
-    </span>
   )
 }
 
@@ -221,4 +194,3 @@ export function DashboardConsistencyCard({
     </InsightSurface>
   )
 }
-

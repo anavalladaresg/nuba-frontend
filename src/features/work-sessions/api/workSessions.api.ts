@@ -1,10 +1,15 @@
 import { apiClient } from '../../../shared/api/api-client'
 import {
   todayWorkSessionsResponseSchema,
+  workSessionDetailResponseSchema,
   workSessionHistoryResponseSchema,
   workSessionPausePayloadSchema,
+  workSessionStartResponseSchema,
+  workSessionUpdatePayloadSchema,
   type BreakType,
+  type WorkSessionDetailResponse,
   type WorkSessionHistoryResponse,
+  type WorkSessionUpdatePayload,
 } from '../../../shared/types/work-session'
 
 type HistoryFilters = {
@@ -21,7 +26,7 @@ export const workSessionsApi = {
     }),
   start: () =>
     apiClient.post('/api/work-sessions/start', {
-      responseType: 'void',
+      schema: workSessionStartResponseSchema,
     }),
   pause: (breakType: BreakType) =>
     apiClient.post('/api/work-sessions/pause', {
@@ -44,6 +49,15 @@ export const workSessionsApi = {
     apiClient.get<WorkSessionHistoryResponse>('/api/work-sessions/history', {
       query: filters,
       schema: workSessionHistoryResponseSchema,
+    }),
+  getDetail: (sessionId: string) =>
+    apiClient.get<WorkSessionDetailResponse>(`/api/work-sessions/${sessionId}`, {
+      schema: workSessionDetailResponseSchema,
+    }),
+  update: (sessionId: string, payload: WorkSessionUpdatePayload) =>
+    apiClient.put(`/api/work-sessions/${sessionId}`, {
+      body: workSessionUpdatePayloadSchema.parse(payload),
+      responseType: 'void',
     }),
 }
 
