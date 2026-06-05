@@ -522,6 +522,9 @@ const getActiveBreak = (session: StoredSession | undefined, nowIso: string) => {
   return activeBreak ? toWorkBreak(activeBreak, nowIso) : null
 }
 
+const hasAutoCompleteLog = (session: StoredSession) =>
+  session.manualEdits.some((edit) => edit.fieldChanged === AUTO_COMPLETE_LOG_FIELD)
+
 const buildDaySummary = (db: PrototypeDb, date: string, nowIso: string): DaySummary => {
   const sessions = getSessionsForDate(db, date)
   const workSessions = sessions.map((session) => toWorkSession(session, nowIso))
@@ -737,7 +740,14 @@ const buildCalendarResponse = (
 ): CalendarMonthResponse => ({
   year,
   month,
-  days: getMonthDates(year, month).map((date) => buildDaySummary(db, date, nowIso)),
+  days: getMonthDates(year, month).map((date) => {
+    const sessions = getSessionsForDate(db, date)
+
+    return {
+      ...buildDaySummary(db, date, nowIso),
+      hasAutoCompletedSession: sessions.some(hasAutoCompleteLog),
+    }
+  }),
 })
 
 const createTimeline = (

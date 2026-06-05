@@ -1,6 +1,6 @@
 import type { CalendarDay } from '../../../shared/types/statistics'
 
-export type CalendarDayTone = 'empty' | 'success' | 'warning' | 'danger'
+export type CalendarDayTone = 'empty' | 'success' | 'warning' | 'danger' | 'automatic'
 export type CalendarDayKind = 'workday' | 'weekend' | 'holiday' | 'personal'
 
 const holidayPatterns = ['HOLIDAY', 'FEST', 'BANK_HOLIDAY']
@@ -33,6 +33,10 @@ export const getCalendarDayCompletion = (summary?: CalendarDay) => {
 }
 
 export const getCalendarDayTone = (summary?: CalendarDay): CalendarDayTone => {
+  if (summary?.hasAutoCompletedSession) {
+    return 'automatic'
+  }
+
   if (!summary || (summary.workedMinutes <= 0 && !summary.hasOpenSession)) {
     return 'empty'
   }
@@ -87,6 +91,8 @@ export const getCalendarDayToneLabel = (tone: CalendarDayTone) => {
       return 'Cerca'
     case 'danger':
       return 'Bajo'
+    case 'automatic':
+      return 'Automático'
     case 'empty':
       return 'Sin datos'
   }

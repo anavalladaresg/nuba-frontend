@@ -555,6 +555,12 @@ const createTimeline = (
 const getOutingsCount = (manualEditLogs: ManualEditLogRow[]) =>
   manualEditLogs.filter((log) => log.field_changed === OUTING_LOG_FIELD).length
 
+const hasAutoCompleteLog = (manualEditLogs: ManualEditLogRow[]) =>
+  manualEditLogs.some((log) => log.field_changed === AUTO_COMPLETE_LOG_FIELD)
+
+const hasAutoCompletedSession = (bundles: SessionBundle[]) =>
+  bundles.some((bundle) => hasAutoCompleteLog(bundle.manualEditLogs))
+
 const buildDaySummary = (
   date: string,
   bundles: SessionBundle[],
@@ -1996,15 +2002,20 @@ export async function supabaseFrontendRequest<TSchema>(
       return {
         year,
         month,
-        days: dates.map((date) =>
-          buildDaySummary(
-            date,
-            bundlesByDate[date] ?? [],
-            goals,
-            specialDayByDate.get(date) ?? null,
-            nowIso,
-          ),
-        ),
+        days: dates.map((date) => {
+          const dateBundles = bundlesByDate[date] ?? []
+
+          return {
+            ...buildDaySummary(
+              date,
+              dateBundles,
+              goals,
+              specialDayByDate.get(date) ?? null,
+              nowIso,
+            ),
+            hasAutoCompletedSession: hasAutoCompletedSession(dateBundles),
+          }
+        }),
       } satisfies CalendarMonthResponse as TSchema
     }
 
