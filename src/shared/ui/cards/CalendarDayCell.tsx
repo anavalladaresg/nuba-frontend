@@ -24,6 +24,8 @@ const toneClasses = {
     'border-nuba-break/16 bg-[radial-gradient(circle_at_top,rgba(255,209,102,0.11),transparent_58%),linear-gradient(180deg,rgba(255,209,102,0.04),rgba(18,24,33,0.88))] shadow-[inset_0_1px_0_rgba(255,255,255,0.035),0_14px_28px_-32px_rgba(255,209,102,0.16)] hover:border-nuba-break/24',
   danger:
     'border-nuba-check-out/15 bg-[radial-gradient(circle_at_top,rgba(255,122,122,0.1),transparent_58%),linear-gradient(180deg,rgba(255,122,122,0.038),rgba(18,24,33,0.9))] shadow-[inset_0_1px_0_rgba(255,255,255,0.035),0_14px_28px_-32px_rgba(255,122,122,0.14)] hover:border-nuba-check-out/22',
+  automatic:
+    'border-nuba-overtime/24 bg-[radial-gradient(circle_at_top,rgba(179,136,255,0.22),transparent_58%),linear-gradient(180deg,rgba(124,158,255,0.07),rgba(18,24,33,0.9))] shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_16px_30px_-30px_rgba(179,136,255,0.28)] hover:border-nuba-overtime/34',
 } as const
 
 const progressClasses = {
@@ -34,6 +36,8 @@ const progressClasses = {
     'bg-gradient-to-r from-nuba-break to-[#FFE3A1] shadow-[0_0_10px_rgba(255,209,102,0.35)]',
   danger:
     'bg-gradient-to-r from-nuba-check-out to-[#FFA29A] shadow-[0_0_10px_rgba(255,122,122,0.32)]',
+  automatic:
+    'bg-gradient-to-r from-nuba-overtime via-nuba-brand to-[#D9C7FF] shadow-[0_0_12px_rgba(179,136,255,0.42)]',
 } as const
 
 export function CalendarDayCell({

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MeSettings, NotificationsSettings, CurrentUser, DailyGoal } from '../types/settings'
+import type { CalendarMonthResponse } from '../types/statistics'
 import type {
   TodayWorkSessionsResponse,
   WorkSessionStartResponse,
@@ -210,5 +211,44 @@ describe('prototype backend work sessions', () => {
 
     expect(closedSession?.endTime).toBe('2026-05-15T13:35:00.000Z')
     expect(closedSession?.manualEdits.at(-1)?.fieldChanged).toBe('AUTO_COMPLETE')
+  })
+
+  it('marks existing auto-completed sessions in the calendar month response', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-16T08:00:00.000Z'))
+
+    seedDb([
+      {
+        id: 'session-auto-closed',
+        status: 'EDITED',
+        startTime: '2026-05-14T06:00:00.000Z',
+        endTime: '2026-05-14T14:30:00.000Z',
+        notes: null,
+        reason: 'Cierre automático tras 30m de margen por olvido de desfichaje.',
+        breaks: [],
+        timeline: [],
+        manualEdits: [
+          {
+            id: 'edit-auto-complete',
+            editedAt: '2026-05-15T08:00:00.000Z',
+            fieldChanged: 'AUTO_COMPLETE',
+            oldValue: null,
+            newValue: JSON.stringify({
+              endTime: '2026-05-14T14:30:00.000Z',
+              graceMinutes: 30,
+            }),
+            reason: 'Cierre automático tras 30m de margen por olvido de desfichaje.',
+            notes: null,
+          },
+        ],
+      },
+    ])
+
+    const response = await runPrototypeRequest<CalendarMonthResponse>('/api/calendar/month')
+    const autoClosedDay = response.days.find((day) => day.date === '2026-05-14')
+    const untouchedDay = response.days.find((day) => day.date === '2026-05-15')
+
+    expect(autoClosedDay?.hasAutoCompletedSession).toBe(true)
+    expect(untouchedDay?.hasAutoCompletedSession).toBe(false)
   })
 })

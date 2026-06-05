@@ -44,6 +44,7 @@ export const dashboardStatisticsResponseSchema = z.object({
 
 export const calendarDaySchema = daySummarySchema.extend({
   latestStatus: daySummarySchema.shape.latestStatus,
+  hasAutoCompletedSession: z.boolean().default(false),
 })
 
 export const calendarMonthResponseSchema = z.object({
