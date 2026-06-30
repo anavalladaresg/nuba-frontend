@@ -1254,10 +1254,11 @@ const maybeAutoCompleteOpenSession = (
   const workDate = getBusinessDateFromInstant(session.startTime)
   const today = getBusinessDateFromInstant(nowIso)
 
-  if (workDate > today || hasOpenBreak(session)) {
+  if (workDate > today) {
     return null
   }
 
+  const activeBreak = session.breaks.find((workBreak) => workBreak.endTime === null) ?? null
   const graceMinutes = normalizeAutoCompleteGraceMinutes(
     db.settings.autoCompleteGraceMinutes,
   )
@@ -1272,12 +1273,20 @@ const maybeAutoCompleteOpenSession = (
     new Date(session.startTime),
     resolveAutoCompleteTargetMinutes(db, session) + closedBreakMinutes + graceMinutes,
   ).toISOString()
+  const effectiveEndTime =
+    activeBreak && new Date(endTime) < new Date(activeBreak.startTime)
+      ? activeBreak.startTime
+      : endTime
 
-  if (new Date(endTime) > new Date(nowIso)) {
+  if (new Date(effectiveEndTime) > new Date(nowIso)) {
     return null
   }
 
-  session.endTime = endTime
+  if (activeBreak) {
+    activeBreak.endTime = effectiveEndTime
+  }
+
+  session.endTime = effectiveEndTime
   session.status = 'EDITED'
   session.reason = buildAutoCompleteReason(graceMinutes)
   session.manualEdits.push({
@@ -1285,7 +1294,7 @@ const maybeAutoCompleteOpenSession = (
     editedAt: nowIso,
     fieldChanged: AUTO_COMPLETE_LOG_FIELD,
     oldValue: null,
-    newValue: JSON.stringify({ endTime, graceMinutes }),
+    newValue: JSON.stringify({ endTime: effectiveEndTime, graceMinutes }),
     reason: buildAutoCompleteReason(graceMinutes),
     notes: null,
   })
@@ -1300,7 +1309,7 @@ const maybeAutoCompleteOpenSession = (
   return buildAutoCloseNotice({
     sessionId: session.id,
     workDate,
-    endTime,
+    endTime: effectiveEndTime,
     graceMinutes,
   })
 }

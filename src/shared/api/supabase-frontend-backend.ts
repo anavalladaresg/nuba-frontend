@@ -1189,21 +1189,50 @@ const maybeAutoCompleteOpenSession = async ({
     return null
   }
 
-  if (openBundle.breaks.some((workBreak) => workBreak.end_time === null)) {
-    return null
-  }
-
-  const { endTime, graceMinutes } = getAutoCompleteEndTime(
+  const activeBreak = openBundle.breaks.find((workBreak) => workBreak.end_time === null) ?? null
+  const { endTime: calculatedEndTime, graceMinutes } = getAutoCompleteEndTime(
     openBundle.session,
     openBundle.breaks,
     workSettings,
   )
+  const endTime =
+    activeBreak && new Date(calculatedEndTime) < new Date(activeBreak.start_time)
+      ? activeBreak.start_time
+      : calculatedEndTime
 
   if (new Date(endTime) > new Date(nowIso)) {
     return null
   }
 
-  await persistSessionMetrics(openBundle.session, openBundle.breaks, endTime, 'EDITED', {
+  const effectiveBreaks = activeBreak
+    ? openBundle.breaks.map((workBreak) =>
+        workBreak.id === activeBreak.id
+          ? {
+              ...workBreak,
+              end_time: endTime,
+              duration_minutes: minutesBetween(workBreak.start_time, endTime),
+              updated_at: nowIso,
+            }
+          : workBreak,
+      )
+    : openBundle.breaks
+
+  if (activeBreak) {
+    const closeBreak = await supabase
+      .from('break_sessions')
+      .update({
+        end_time: endTime,
+        duration_minutes: minutesBetween(activeBreak.start_time, endTime),
+        updated_at: nowIso,
+      })
+      .eq('id', activeBreak.id)
+
+    if (closeBreak.error) {
+      throw closeBreak.error
+    }
+  }
+
+  await persistSessionMetrics(openBundle.session, effectiveBreaks, endTime, 'EDITED', {
     end_time: endTime,
     updated_at: nowIso,
   })
