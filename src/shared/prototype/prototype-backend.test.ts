@@ -213,6 +213,54 @@ describe('prototype backend work sessions', () => {
     expect(closedSession?.manualEdits.at(-1)?.fieldChanged).toBe('AUTO_COMPLETE')
   })
 
+  it('auto-completes a paused session once target plus grace has passed', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-15T14:00:00.000Z'))
+
+    seedDb(
+      [
+        {
+          id: 'session-paused',
+          status: 'PAUSED',
+          startTime: '2026-05-15T05:00:00.000Z',
+          endTime: null,
+          notes: null,
+          reason: null,
+          breaks: [
+            {
+              id: 'break-lunch',
+              breakType: 'LUNCH',
+              startTime: '2026-05-15T10:00:00.000Z',
+              endTime: null,
+            },
+          ],
+          timeline: [],
+          manualEdits: [],
+        },
+      ],
+      {
+        autoCompleteForgottenCheckout: true,
+        autoCompleteGraceMinutes: 35,
+      },
+    )
+
+    const response = await runPrototypeRequest<TodayWorkSessionsResponse>('/api/work-sessions/today')
+
+    expect(response.summary.hasOpenSession).toBe(false)
+    expect(response.paused).toBe(false)
+    expect(response.activeBreak).toBeNull()
+    expect(response.sessions[0]?.id).toBe('session-paused')
+    expect(response.sessions[0]?.endTime).toBe('2026-05-15T13:35:00.000Z')
+    expect(response.sessions[0]?.status).toBe('EDITED')
+
+    const persisted = getPrototypeDbSnapshotForTests()
+    const closedSession = persisted.sessions.find((session) => session.id === 'session-paused')
+
+    expect(closedSession?.endTime).toBe('2026-05-15T13:35:00.000Z')
+    expect(closedSession?.breaks[0]?.endTime).toBe('2026-05-15T13:35:00.000Z')
+    expect(closedSession?.manualEdits.at(-1)?.fieldChanged).toBe('AUTO_COMPLETE')
+  })
+
   it('marks existing auto-completed sessions in the calendar month response', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-16T08:00:00.000Z'))

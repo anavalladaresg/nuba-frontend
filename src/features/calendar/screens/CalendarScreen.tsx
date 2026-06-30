@@ -3,7 +3,7 @@ import { eachDayOfInterval, endOfMonth, format, getDate, getISODay, startOfMonth
 import { es } from 'date-fns/locale'
 import { useQuery } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'motion/react'
-import { ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, PencilLine, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { calendarApi } from '../api/calendar.api'
 import { calendarKeys } from '../api/calendar.keys'
@@ -502,54 +502,65 @@ export function CalendarScreen() {
 
                   {daySessions.length ? (
                     <div className="space-y-3">
-                      {daySessions.map((session) => (
-                        <div
-                          key={session.id}
-                          className={cn(
-                            'w-full rounded-[24px] border border-white/[0.06] bg-[linear-gradient(180deg,_rgb(26_35_48_/_0.22),_rgb(18_24_33_/_0.42))] px-4 py-3 text-left',
-                          )}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-nuba-text-muted/82">
-                                  {getStatusLabel(session.status)}
-                                </span>
-                                {session.autoCloseNotice ? (
-                                  <span className="rounded-full border border-nuba-break/24 bg-nuba-break/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-nuba-break">
-                                    Autocompletada
+                      {daySessions.map((session) => {
+                        const isActiveSession = selectedSessionId === session.id
+
+                        return (
+                          <button
+                            key={session.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedSessionId(session.id)
+                              setSaveFeedback(null)
+                            }}
+                            className={cn(
+                              'w-full rounded-[24px] border px-4 py-3 text-left transition duration-200',
+                              isActiveSession
+                                ? 'border-nuba-brand/28 bg-nuba-brand/[0.08] shadow-[0_18px_46px_-34px_rgb(124_158_255_/_0.85)]'
+                                : 'border-white/[0.06] bg-[linear-gradient(180deg,_rgb(26_35_48_/_0.22),_rgb(18_24_33_/_0.42))] hover:border-white/12 hover:bg-white/[0.04]',
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-nuba-text-muted/82">
+                                    {getStatusLabel(session.status)}
                                   </span>
-                                ) : null}
+                                  {session.autoCloseNotice ? (
+                                    <span className="rounded-full border border-nuba-break/24 bg-nuba-break/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-nuba-break">
+                                      Autocompletada
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <p className="mt-2 text-[1rem] font-semibold tracking-[-0.03em] text-nuba-text">
+                                  {formatTime(session.startTime)} {session.endTime ? `- ${formatTime(session.endTime)}` : '- abierta'}
+                                </p>
+                                <p className="mt-1 text-xs leading-5 text-nuba-text-muted/72">
+                                  {session.reason
+                                    ? session.reason
+                                    : session.endTime
+                                      ? 'Sin incidencias registradas.'
+                                      : 'Esta jornada sigue abierta y puede corregirse desde aquí.'}
+                                </p>
                               </div>
-                              <p className="mt-2 text-[1rem] font-semibold tracking-[-0.03em] text-nuba-text">
-                                {formatTime(session.startTime)} {session.endTime ? `- ${formatTime(session.endTime)}` : '- abierta'}
-                              </p>
-                              <p className="mt-1 text-xs leading-5 text-nuba-text-muted/72">
-                                {session.reason
-                                  ? session.reason
-                                  : session.endTime
-                                    ? 'Sin incidencias registradas.'
-                                    : 'Esta jornada sigue abierta y puede corregirse desde aquí.'}
-                              </p>
+
+                              <div className="shrink-0 text-right">
+                                <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-nuba-text-muted/50">
+                                  Neto
+                                </p>
+                                <p className="mt-1 text-sm font-semibold text-nuba-text">
+                                  {formatMinutesCompact(session.workedMinutes ?? 0)}
+                                </p>
+                              </div>
                             </div>
 
-                            <div className="shrink-0 text-right">
-                              <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-nuba-text-muted/50">
-                                Neto
-                              </p>
-                              <p className="mt-1 text-sm font-semibold text-nuba-text">
-                                {formatMinutesCompact(session.workedMinutes ?? 0)}
-                              </p>
-                            </div>
-                          </div>
-
-                          {/* Temporalmente oculto: no queremos permitir ajustes de tiempos desde esta vista.
                             <div className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-nuba-brand">
                               <PencilLine className="h-3.5 w-3.5" />
                               Ajustar tiempos
-                            </div> */}
-                        </div>
-                      ))}
+                            </div>
+                          </button>
+                        )
+                      })}
                     </div>
                   ) : null}
 
